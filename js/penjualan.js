@@ -279,7 +279,11 @@ const Penjualan = {
   },
 
   _toNum(v) {
-    return parseFloat(String(v).replace(/[^0-9.-]/g, '')) || 0;
+    const s = String(v).trim();
+    if (!s) return 0;
+    // Format Indonesia (Shopee): titik = pemisah ribuan, koma = desimal
+    // "19.837.500" → 19837500 | "1.500,50" → 1500.50
+    return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
   },
 
   _toDate(v) {
