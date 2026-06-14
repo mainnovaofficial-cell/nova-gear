@@ -42,9 +42,9 @@ const Penjualan = {
           Tambah Manual
         </button>
         ${App.isOwner() ? `
-        <button onclick="Penjualan.hapusSemuaData()" class="btn-danger text-xs">
+        <button onclick="Penjualan.openHapusPeriode()" class="btn-danger text-xs">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-          Hapus Semua Data
+          Hapus Data Periode
         </button>` : ''}
       </div>
     </div>
@@ -813,15 +813,53 @@ const Penjualan = {
     this._renderTab();
   },
 
-  async hapusSemuaData() {
-    if (!App.isOwner()) { App.toast('Hanya Owner yang bisa menghapus semua data.', 'warning'); return; }
-    const ok = await App.confirm('Apakah Anda yakin? Semua data pesanan akan dihapus permanen dan tidak dapat dikembalikan.');
+  openHapusPeriode() {
+    if (!App.isOwner()) { App.toast('Hanya Owner yang bisa menghapus data.', 'warning'); return; }
+    const now = new Date();
+    const bulanNames = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+    App.openModal({
+      title: 'Hapus Data Periode',
+      body: `
+        <p class="text-sm text-gray-600 mb-4">Pilih bulan dan tahun yang ingin dihapus. Semua pesanan pada periode tersebut akan dihapus permanen.</p>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="label">Bulan</label>
+            <select id="del-bulan" class="input">
+              ${bulanNames.map((m, i) => `<option value="${String(i+1).padStart(2,'0')}" ${i+1 === now.getMonth()+1 ? 'selected' : ''}>${m}</option>`).join('')}
+            </select>
+          </div>
+          <div><label class="label">Tahun</label>
+            <input id="del-tahun" type="number" class="input" value="${now.getFullYear()}" min="2020" max="2035"/>
+          </div>
+        </div>`,
+      footer: `
+        <button onclick="App.closeModal()" class="btn-secondary">Batal</button>
+        <button onclick="Penjualan.hapusPeriode()" class="btn-danger">Hapus</button>`,
+    });
+  },
+
+  async hapusPeriode() {
+    const bulan    = document.getElementById('del-bulan').value;
+    const tahun    = document.getElementById('del-tahun').value;
+    const bulanNames = ['','Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+    const label    = `${bulanNames[parseInt(bulan)]} ${tahun}`;
+    const dateFrom = `${tahun}-${bulan}-01`;
+    const dateTo   = `${tahun}-${bulan}-31`;
+
+    App.closeModal();
+
+    const ok = await App.confirm(`Hapus semua pesanan bulan ${label}? Tidak bisa dibatalkan.`);
     if (!ok) return;
+
     try {
-      const { error } = await App.db().from('orders').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      const { error } = await App.db()
+        .from('orders')
+        .delete()
+        .gte('order_date', dateFrom)
+        .lte('order_date', dateTo);
       if (error) throw error;
-      App.toast('Semua data pesanan berhasil dihapus.', 'success');
-      this._orders = [];
+
+      App.toast(`Data pesanan ${label} berhasil dihapus.`, 'success');
+      await this._loadOrders();
       this._renderTab();
     } catch (err) {
       App.toast('Gagal hapus: ' + err.message, 'error');
