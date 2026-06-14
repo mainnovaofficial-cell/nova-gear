@@ -116,14 +116,33 @@ create table if not exists settings (
 
 -- ── Default settings
 insert into settings (key, value) values
-  ('store_name',              'Nova Gear'),
-  ('shopee_commission_pct',   '2'),
-  ('shopee_service_fee_pct',  '2'),
-  ('shopee_ads_fee_pct',      '0'),
-  ('yuan_rate',               '2200'),
-  ('default_expedition',      'JNE'),
-  ('owner_password',          'owner123'),
-  ('admin_password',          'admin123')
+  ('store_name',                'Nova Gear'),
+  ('shopee_service_fee_pct',    '6.5'),
+  ('shopee_free_shipping_pct',  '5.5'),
+  ('shopee_promo_xtra_pct',     '6.5'),
+  ('shopee_affiliate_pct',      '5.0'),
+  ('modal_awal',                '0'),
+  ('yuan_rate',                 '2200'),
+  ('default_expedition',        'JNE'),
+  ('owner_password',            'owner123'),
+  ('admin_password',            'admin123')
+on conflict (key) do nothing;
+
+-- ═══════════════════════════════════════════════════════
+--  MIGRASI — jalankan jika database sudah ada sebelumnya
+--  (skip jika baru setup dari awal)
+-- ═══════════════════════════════════════════════════════
+
+-- Hapus kolom settings lama yang sudah diganti
+delete from settings where key in ('shopee_commission_pct', 'shopee_ads_fee_pct');
+
+-- Tambah settings baru (jika belum ada)
+insert into settings (key, value) values
+  ('shopee_service_fee_pct',    '6.5'),
+  ('shopee_free_shipping_pct',  '5.5'),
+  ('shopee_promo_xtra_pct',     '6.5'),
+  ('shopee_affiliate_pct',      '5.0'),
+  ('modal_awal',                '0')
 on conflict (key) do nothing;
 
 -- ═══════════════════════════════════════════════════════
