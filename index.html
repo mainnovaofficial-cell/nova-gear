@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nova Gear — Business Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { DEFAULT: '#2563eb', light: '#3b82f6', dark: '#1d4ed8' }
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body class="bg-gray-50 text-gray-800 antialiased">
+
+<!-- ════════════════════════════════════════════
+     SETUP MODAL — Konfigurasi Supabase (first run)
+════════════════════════════════════════════ -->
+<div id="setup-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-900">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-8">
+    <div class="flex items-center gap-3 mb-6">
+      <div class="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white text-xl font-bold">N</div>
+      <div>
+        <h1 class="text-xl font-bold text-gray-900">Nova Gear</h1>
+        <p class="text-xs text-gray-500">Setup koneksi database</p>
+      </div>
+    </div>
+    <p class="text-sm text-gray-600 mb-5 bg-blue-50 border border-blue-100 rounded-lg p-3">
+      Masukkan kredensial Supabase Anda. Cek <strong>Project Settings → API</strong> di dashboard Supabase.
+    </p>
+    <div class="space-y-4">
+      <div>
+        <label class="label">Supabase Project URL</label>
+        <input id="setup-url" type="url" class="input" placeholder="https://xxxx.supabase.co" />
+      </div>
+      <div>
+        <label class="label">Supabase Anon Key</label>
+        <input id="setup-key" type="password" class="input" placeholder="eyJhbGci..." />
+      </div>
+      <div>
+        <label class="label">Nama Toko</label>
+        <input id="setup-store" type="text" class="input" placeholder="Nova Gear" value="Nova Gear" />
+      </div>
+    </div>
+    <button onclick="App.saveSetup()" class="btn-primary w-full mt-6">
+      Simpan & Lanjutkan
+    </button>
+    <p id="setup-error" class="hidden text-red-500 text-sm text-center mt-3"></p>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════
+     LOGIN SCREEN
+════════════════════════════════════════════ -->
+<div id="login-screen" class="hidden fixed inset-0 z-40 flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900">
+  <!-- Decorative blobs -->
+  <div class="absolute top-0 left-0 w-96 h-96 bg-blue-600 opacity-10 rounded-full -translate-x-1/2 -translate-y-1/2 blur-3xl pointer-events-none"></div>
+  <div class="absolute bottom-0 right-0 w-96 h-96 bg-indigo-600 opacity-10 rounded-full translate-x-1/2 translate-y-1/2 blur-3xl pointer-events-none"></div>
+
+  <div class="relative bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-8">
+    <!-- Logo -->
+    <div class="flex flex-col items-center mb-8">
+      <div class="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center text-white text-3xl font-black mb-3 shadow-lg shadow-blue-500/30">N</div>
+      <h1 class="text-2xl font-black text-white tracking-tight">Nova Gear</h1>
+      <p class="text-blue-200 text-sm mt-1">Business Dashboard</p>
+    </div>
+
+    <!-- Form -->
+    <form id="login-form" onsubmit="App.handleLogin(event)" class="space-y-4">
+      <div>
+        <label class="text-blue-200 text-xs font-medium uppercase tracking-wider mb-1.5 block">Level Akses</label>
+        <select id="login-role" class="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-400 appearance-none">
+          <option value="owner" class="text-gray-900">👑 Owner</option>
+          <option value="admin" class="text-gray-900">🛠️ Admin</option>
+        </select>
+      </div>
+      <div>
+        <label class="text-blue-200 text-xs font-medium uppercase tracking-wider mb-1.5 block">Password</label>
+        <input id="login-password" type="password" autocomplete="current-password"
+               class="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2.5 text-white placeholder-blue-300/50 focus:outline-none focus:ring-2 focus:ring-blue-400"
+               placeholder="Masukkan password" />
+      </div>
+      <p id="login-error" class="hidden text-red-300 text-sm text-center"></p>
+      <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 rounded-lg transition-colors mt-2 shadow-lg shadow-blue-500/30">
+        Masuk
+      </button>
+    </form>
+
+    <p class="text-blue-300/50 text-xs text-center mt-6">
+      © 2025 Nova Gear · All rights reserved
+    </p>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════
+     APP SHELL
+════════════════════════════════════════════ -->
+<div id="app" class="hidden h-screen flex overflow-hidden">
+
+  <!-- ── SIDEBAR ── -->
+  <aside id="sidebar" class="sidebar bg-slate-900 flex flex-col flex-shrink-0 overflow-hidden transition-all duration-300">
+
+    <!-- Logo -->
+    <div class="flex items-center gap-3 px-4 py-5 border-b border-white/10 min-h-[65px]">
+      <div class="w-9 h-9 flex-shrink-0 bg-blue-600 rounded-xl flex items-center justify-center text-white font-black text-lg">N</div>
+      <div class="sidebar-label overflow-hidden">
+        <span class="text-white font-bold text-sm whitespace-nowrap" id="sidebar-store-name">Nova Gear</span>
+        <span class="text-slate-400 text-xs block whitespace-nowrap">Business Dashboard</span>
+      </div>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="flex-1 py-3 overflow-y-auto scrollbar-hide">
+
+      <div class="px-3 mb-1">
+        <p class="sidebar-label text-slate-500 text-[10px] font-semibold uppercase tracking-widest px-2 mb-1">Utama</p>
+      </div>
+
+      <a href="#" class="nav-item active" data-page="dashboard" onclick="App.navigate('dashboard'); return false;">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+        </svg>
+        <span class="nav-label">Dashboard</span>
+      </a>
+
+      <a href="#" class="nav-item" data-page="penjualan" onclick="App.navigate('penjualan'); return false;">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+        </svg>
+        <span class="nav-label">Penjualan</span>
+      </a>
+
+      <a href="#" class="nav-item" data-page="scanner" onclick="App.navigate('scanner'); return false;">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+        </svg>
+        <span class="nav-label">Scanner Packing</span>
+      </a>
+
+      <div class="px-3 mt-4 mb-1">
+        <p class="sidebar-label text-slate-500 text-[10px] font-semibold uppercase tracking-widest px-2 mb-1">Keuangan</p>
+      </div>
+
+      <a href="#" class="nav-item" data-page="stok" onclick="App.navigate('stok'); return false;">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+        </svg>
+        <span class="nav-label">Stok</span>
+      </a>
+
+      <a href="#" class="nav-item" data-page="hpp" onclick="App.navigate('hpp'); return false;">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+        </svg>
+        <span class="nav-label">HPP</span>
+      </a>
+
+      <a href="#" class="nav-item" data-page="iklan" onclick="App.navigate('iklan'); return false;">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" />
+        </svg>
+        <span class="nav-label">Iklan & Marketing</span>
+      </a>
+
+      <a href="#" class="nav-item" data-page="operasional" onclick="App.navigate('operasional'); return false;">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+        </svg>
+        <span class="nav-label">Operasional</span>
+      </a>
+
+      <div class="px-3 mt-4 mb-1">
+        <p class="sidebar-label text-slate-500 text-[10px] font-semibold uppercase tracking-widest px-2 mb-1">Laporan</p>
+      </div>
+
+      <a href="#" class="nav-item" data-page="analisis" onclick="App.navigate('analisis'); return false;">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+        </svg>
+        <span class="nav-label">Analisis Produk</span>
+      </a>
+
+      <a href="#" class="nav-item" data-page="labarugi" onclick="App.navigate('labarugi'); return false;">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+        </svg>
+        <span class="nav-label">Laba Rugi</span>
+      </a>
+
+      <div class="px-3 mt-4 mb-1">
+        <p class="sidebar-label text-slate-500 text-[10px] font-semibold uppercase tracking-widest px-2 mb-1">Sistem</p>
+      </div>
+
+      <a href="#" class="nav-item" data-page="pengaturan" onclick="App.navigate('pengaturan'); return false;">
+        <svg class="nav-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+        <span class="nav-label">Pengaturan</span>
+      </a>
+    </nav>
+
+    <!-- Sidebar Footer -->
+    <div class="border-t border-white/10 p-3">
+      <div class="flex items-center gap-3 px-2 py-2">
+        <div class="w-8 h-8 flex-shrink-0 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold" id="user-avatar">O</div>
+        <div class="sidebar-label min-w-0">
+          <p class="text-white text-sm font-medium truncate" id="user-role-display">Owner</p>
+          <p class="text-slate-400 text-xs">Nova Gear</p>
+        </div>
+        <button onclick="App.handleLogout()" title="Keluar"
+                class="sidebar-label ml-auto flex-shrink-0 text-slate-400 hover:text-red-400 transition-colors">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── MAIN AREA ── -->
+  <div class="flex flex-col flex-1 min-w-0 overflow-hidden">
+
+    <!-- TOPBAR -->
+    <header class="bg-white border-b border-gray-200 flex items-center justify-between px-5 py-3 flex-shrink-0 z-10">
+      <div class="flex items-center gap-3">
+        <!-- Toggle sidebar -->
+        <button id="sidebar-toggle" onclick="App.toggleSidebar()"
+                class="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+        <!-- Breadcrumb -->
+        <div class="flex items-center gap-1.5">
+          <span class="text-gray-400 text-sm font-medium" id="topbar-store">Nova Gear</span>
+          <svg class="w-3.5 h-3.5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+          </svg>
+          <h1 class="text-gray-800 font-semibold text-sm" id="page-title">Dashboard</h1>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-4">
+        <span id="current-datetime" class="text-xs text-gray-400 hidden sm:block"></span>
+        <!-- Role badge -->
+        <span id="role-badge" class="px-2.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-100 rounded-full text-xs font-medium">Owner</span>
+      </div>
+    </header>
+
+    <!-- CONTENT AREA -->
+    <main id="main-content" class="flex-1 overflow-y-auto bg-gray-50 p-5 sm:p-6">
+
+      <!-- Each page section (content injected by each module's JS) -->
+      <div id="page-dashboard"    class="page"></div>
+      <div id="page-penjualan"    class="page hidden"></div>
+      <div id="page-scanner"      class="page hidden"></div>
+      <div id="page-stok"         class="page hidden"></div>
+      <div id="page-hpp"          class="page hidden"></div>
+      <div id="page-iklan"        class="page hidden"></div>
+      <div id="page-operasional"  class="page hidden"></div>
+      <div id="page-analisis"     class="page hidden"></div>
+      <div id="page-labarugi"     class="page hidden"></div>
+      <div id="page-pengaturan"   class="page hidden"></div>
+
+    </main>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════
+     GLOBAL MODAL
+════════════════════════════════════════════ -->
+<div id="modal-backdrop" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-40" onclick="App.closeModal()"></div>
+<div id="modal-container" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
+  <div id="modal-box" class="bg-white rounded-2xl shadow-xl w-full max-w-lg pointer-events-auto max-h-[90vh] flex flex-col">
+    <!-- Modal header -->
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
+      <h3 class="font-semibold text-gray-900" id="modal-title">Modal</h3>
+      <button onclick="App.closeModal()" class="text-gray-400 hover:text-gray-600 transition-colors">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+    <!-- Modal body (injected dynamically) -->
+    <div class="overflow-y-auto flex-1 p-6" id="modal-body"></div>
+    <!-- Modal footer (injected dynamically) -->
+    <div id="modal-footer" class="hidden px-6 py-4 border-t border-gray-100 flex-shrink-0 flex gap-3 justify-end"></div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════
+     TOAST NOTIFICATIONS
+════════════════════════════════════════════ -->
+<div id="toast-container" class="fixed top-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none"></div>
+
+<!-- ════════════════════════════════════════════
+     SCRIPTS
+════════════════════════════════════════════ -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="js/app.js"></script>
+<script src="js/dashboard.js"></script>
+<script src="js/penjualan.js"></script>
+<script src="js/scanner.js"></script>
+<script src="js/stok.js"></script>
+<script src="js/hpp.js"></script>
+<script src="js/iklan.js"></script>
+<script src="js/operasional.js"></script>
+<script src="js/analisis.js"></script>
+<script src="js/labarugi.js"></script>
+<script src="js/pengaturan.js"></script>
+
+</body>
+</html>

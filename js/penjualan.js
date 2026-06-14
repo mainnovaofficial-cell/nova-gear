@@ -1,0 +1,419 @@
+/* ═══════════════════════════════════════════════════════
+   Nova Gear — Penjualan Module
+   Import Shopee xlsx, tambah manual, 3 tab view
+═══════════════════════════════════════════════════════ */
+'use strict';
+
+const Penjualan = {
+  _tab: 'semua',
+  _orders: [],
+  _filter: { status: '', q: '', dateFrom: '', dateTo: '' },
+
+  async onLoad() {
+    const el = document.getElementById('page-penjualan');
+    el.innerHTML = this._shell();
+    await this._loadOrders();
+    this._renderTab();
+    this._bindFilter();
+  },
+
+  _shell() {
+    return `
+    <div class="page-header">
+      <div>
+        <h2>Penjualan</h2>
+        <p>Import file Shopee atau tambah pesanan manual</p>
+      </div>
+      <div class="flex gap-2 flex-wrap">
+        <button onclick="Penjualan.openImport()" class="btn-secondary text-xs">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+          Import Shopee
+        </button>
+        <button onclick="Penjualan.openManual()" class="btn-primary text-xs">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+          Tambah Manual
+        </button>
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-4 !py-3">
+      <div class="flex flex-wrap gap-2 items-center">
+        <input id="pj-search" type="text" placeholder="Cari no. pesanan / produk..." class="input w-52 !py-1.5 text-xs" oninput="Penjualan._onFilter()"/>
+        <select id="pj-status" class="input w-40 !py-1.5 text-xs" onchange="Penjualan._onFilter()">
+          <option value="">Semua Status</option>
+          <option>Selesai</option><option>Dibatalkan</option><option>Gagal</option><option>Dikembalikan</option>
+        </select>
+        <input id="pj-from" type="date" class="input w-36 !py-1.5 text-xs" onchange="Penjualan._onFilter()"/>
+        <input id="pj-to"   type="date" class="input w-36 !py-1.5 text-xs" onchange="Penjualan._onFilter()"/>
+        <button onclick="Penjualan._resetFilter()" class="btn-secondary text-xs !py-1.5">Reset</button>
+        <span id="pj-count" class="text-xs text-gray-400 ml-auto"></span>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab-btn active" onclick="Penjualan._switchTab('semua', this)">Semua Pesanan</button>
+      <button class="tab-btn"        onclick="Penjualan._switchTab('status', this)">Rekap Status</button>
+      <button class="tab-btn"        onclick="Penjualan._switchTab('harian', this)">Rekap Harian</button>
+    </div>
+
+    <div id="pj-tab-content"></div>`;
+  },
+
+  async _loadOrders() {
+    const { data, error } = await App.db().from('orders').select('*').order('order_date', { ascending: false });
+    if (error) { App.toast('Gagal memuat data pesanan.', 'error'); return; }
+    this._orders = data || [];
+  },
+
+  _filtered() {
+    const f = this._filter;
+    return this._orders.filter(o => {
+      if (f.status && o.status !== f.status) return false;
+      if (f.q) {
+        const q = f.q.toLowerCase();
+        if (!(o.order_no||'').toLowerCase().includes(q) && !(o.product_name||'').toLowerCase().includes(q) && !(o.sku||'').toLowerCase().includes(q)) return false;
+      }
+      if (f.dateFrom && (o.order_date||'') < f.dateFrom) return false;
+      if (f.dateTo   && (o.order_date||'') > f.dateTo)   return false;
+      return true;
+    });
+  },
+
+  _switchTab(tab, btn) {
+    this._tab = tab;
+    document.querySelectorAll('#page-penjualan .tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    this._renderTab();
+  },
+
+  _renderTab() {
+    const data = this._filtered();
+    document.getElementById('pj-count').textContent = `${data.length} pesanan`;
+    const el = document.getElementById('pj-tab-content');
+    if (this._tab === 'semua')   el.innerHTML = this._tableSemua(data);
+    if (this._tab === 'status')  el.innerHTML = this._tableStatus(data);
+    if (this._tab === 'harian')  el.innerHTML = this._tableHarian(data);
+  },
+
+  _tableSemua(data) {
+    if (!data.length) return `<div class="empty-state"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg><p>Tidak ada pesanan</p></div>`;
+    const statusBadge = s => {
+      const m = { Selesai:'badge-green', Dibatalkan:'badge-gray', Gagal:'badge-red', Dikembalikan:'badge-orange' };
+      return `<span class="badge ${m[s]||'badge-gray'}">${s||'-'}</span>`;
+    };
+    return `
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead><tr>
+          <th>No. Pesanan</th><th>Tanggal</th><th>Produk</th><th>SKU</th><th>Qty</th>
+          <th>Harga Jual</th><th>Omzet</th><th>Net</th><th>Ekspedisi</th><th>Status</th><th>Sumber</th><th></th>
+        </tr></thead>
+        <tbody>${data.map(o => `<tr>
+          <td class="font-mono text-xs text-gray-500">${o.order_no||'-'}</td>
+          <td class="whitespace-nowrap">${App.formatDate(o.order_date)}</td>
+          <td class="max-w-[180px] truncate" title="${o.product_name||''}">${o.product_name||'-'}</td>
+          <td class="font-mono text-xs">${o.sku||'-'}</td>
+          <td class="text-center">${o.qty||1}</td>
+          <td class="text-money">${App.formatRupiah(o.selling_price)}</td>
+          <td class="text-money">${App.formatRupiah(o.gross_revenue)}</td>
+          <td class="text-money">${App.formatRupiah(o.net_revenue)}</td>
+          <td>${o.expedition||'-'}</td>
+          <td>${statusBadge(o.status)}</td>
+          <td><span class="badge ${o.source==='offline'?'badge-orange':'badge-blue'}">${o.source||'shopee'}</span></td>
+          <td>
+            <button onclick="Penjualan.deleteOrder('${o.id}')" class="text-gray-300 hover:text-red-500 transition-colors" title="Hapus">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </button>
+          </td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+  },
+
+  _tableStatus(data) {
+    const map = {};
+    data.forEach(o => {
+      const s = o.status || 'Tidak Diketahui';
+      if (!map[s]) map[s] = { count: 0, omzet: 0, net: 0 };
+      map[s].count++;
+      map[s].omzet += +o.gross_revenue || 0;
+      map[s].net   += +o.net_revenue   || 0;
+    });
+    const rows = Object.entries(map);
+    if (!rows.length) return `<div class="empty-state"><p>Tidak ada data</p></div>`;
+    const badgeMap = { Selesai:'badge-green', Dibatalkan:'badge-gray', Gagal:'badge-red', Dikembalikan:'badge-orange' };
+    return `
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead><tr><th>Status</th><th>Jumlah Pesanan</th><th>Total Omzet</th><th>Total Net</th></tr></thead>
+        <tbody>${rows.map(([s, v]) => `<tr>
+          <td><span class="badge ${badgeMap[s]||'badge-gray'}">${s}</span></td>
+          <td class="font-semibold">${App.formatNumber(v.count)}</td>
+          <td class="text-money">${App.formatRupiah(v.omzet)}</td>
+          <td class="text-money">${App.formatRupiah(v.net)}</td>
+        </tr>`).join('')}
+        <tr class="font-semibold bg-gray-50">
+          <td>Total</td>
+          <td>${App.formatNumber(data.length)}</td>
+          <td class="text-money">${App.formatRupiah(data.reduce((s,o)=>s+(+o.gross_revenue||0),0))}</td>
+          <td class="text-money">${App.formatRupiah(data.reduce((s,o)=>s+(+o.net_revenue||0),0))}</td>
+        </tr></tbody>
+      </table>
+    </div>`;
+  },
+
+  _tableHarian(data) {
+    const map = {};
+    data.forEach(o => {
+      const d = o.order_date?.slice(0,10) || 'Tanpa Tanggal';
+      if (!map[d]) map[d] = { count: 0, omzet: 0, net: 0, selesai: 0 };
+      map[d].count++;
+      map[d].omzet   += +o.gross_revenue || 0;
+      map[d].net     += +o.net_revenue   || 0;
+      if (o.status === 'Selesai') map[d].selesai++;
+    });
+    const rows = Object.entries(map).sort((a,b) => b[0].localeCompare(a[0]));
+    if (!rows.length) return `<div class="empty-state"><p>Tidak ada data</p></div>`;
+    return `
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead><tr><th>Tanggal</th><th>Total Pesanan</th><th>Selesai</th><th>Total Omzet</th><th>Total Net</th></tr></thead>
+        <tbody>${rows.map(([d, v]) => `<tr>
+          <td class="font-medium">${App.formatDate(d)}</td>
+          <td>${App.formatNumber(v.count)}</td>
+          <td><span class="badge badge-green">${v.selesai}</span></td>
+          <td class="text-money">${App.formatRupiah(v.omzet)}</td>
+          <td class="text-money">${App.formatRupiah(v.net)}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+  },
+
+  _onFilter() {
+    this._filter.q        = document.getElementById('pj-search')?.value || '';
+    this._filter.status   = document.getElementById('pj-status')?.value || '';
+    this._filter.dateFrom = document.getElementById('pj-from')?.value   || '';
+    this._filter.dateTo   = document.getElementById('pj-to')?.value     || '';
+    this._renderTab();
+  },
+
+  _resetFilter() {
+    this._filter = { status: '', q: '', dateFrom: '', dateTo: '' };
+    document.getElementById('pj-search').value = '';
+    document.getElementById('pj-status').value = '';
+    document.getElementById('pj-from').value   = '';
+    document.getElementById('pj-to').value     = '';
+    this._renderTab();
+  },
+
+  _bindFilter() {
+    // Already wired via inline oninput/onchange
+  },
+
+  /* ── Import Shopee xlsx ── */
+  openImport() {
+    App.openModal({
+      title: 'Import File Shopee',
+      body: `
+        <p class="text-sm text-gray-600 mb-4">Upload file <strong>.xlsx</strong> hasil export dari Shopee Seller Center.<br>
+        Pesanan yang sudah ada (berdasarkan No. Pesanan) akan dilewati.</p>
+        <div id="import-drop" class="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer hover:border-blue-300 hover:bg-blue-50/30 transition-colors" onclick="document.getElementById('import-file').click()">
+          <svg class="w-10 h-10 text-gray-300 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          <p class="text-sm text-gray-500">Klik atau seret file xlsx ke sini</p>
+          <input id="import-file" type="file" accept=".xlsx,.xls,.csv" class="hidden" onchange="Penjualan.importFile(this.files[0])"/>
+        </div>
+        <div id="import-progress" class="hidden mt-4 text-sm text-blue-600 text-center font-medium"></div>
+        <div id="import-result"   class="hidden mt-3 p-3 rounded-lg text-sm"></div>`,
+    });
+  },
+
+  async importFile(file) {
+    if (!file) return;
+    const prog = document.getElementById('import-progress');
+    const res  = document.getElementById('import-result');
+    prog.textContent = 'Membaca file...';
+    prog.classList.remove('hidden');
+    res.classList.add('hidden');
+
+    try {
+      const buf = await file.arrayBuffer();
+      const wb  = XLSX.read(buf, { type: 'array', cellDates: true });
+      const ws  = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { raw: false, defval: '' });
+
+      if (!rows.length) { App.toast('File kosong atau tidak terbaca.', 'error'); return; }
+
+      prog.textContent = `Memproses ${rows.length} baris...`;
+
+      // Flexible column mapping
+      const col = (row, ...candidates) => {
+        for (const c of candidates) {
+          if (row[c] !== undefined && row[c] !== '') return row[c];
+        }
+        return '';
+      };
+
+      const toNum = v => parseFloat(String(v).replace(/[^0-9.-]/g, '')) || 0;
+      const toDate = v => {
+        if (!v) return null;
+        if (v instanceof Date) return v.toISOString().slice(0,10);
+        const s = String(v);
+        const m = s.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+        if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+        const m2 = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+        if (m2) return s.slice(0,10);
+        return null;
+      };
+
+      const records = rows.map(r => ({
+        order_no:           col(r, 'No. Pesanan', 'No Pesanan', 'Order ID'),
+        invoice_no:         col(r, 'No. Invoice', 'No Invoice'),
+        product_name:       col(r, 'Nama Produk', 'Product Name', 'Nama Barang'),
+        sku:                col(r, 'No. SKU Produk', 'SKU', 'Kode Produk'),
+        variation:          col(r, 'Nama Variasi', 'Variasi'),
+        qty:                toNum(col(r, 'Jumlah', 'Qty', 'Quantity')) || 1,
+        selling_price:      toNum(col(r, 'Harga Setelah Diskon', 'Harga Jual', 'Unit Price')),
+        gross_revenue:      toNum(col(r, 'Total Harga Setelah Diskon', 'Total Harga Produk', 'Subtotal')),
+        shopee_commission:  toNum(col(r, 'Komisi Shopee (Rp)', 'Komisi Shopee', 'Commission')),
+        shopee_service_fee: toNum(col(r, 'Biaya Layanan (Incl. PPN 11%)', 'Biaya Layanan', 'Service Fee')),
+        shopee_ads_fee:     toNum(col(r, 'Biaya Program', 'Biaya Iklan')),
+        shopee_other_fee:   toNum(col(r, 'Biaya Transaksi', 'Biaya Lain')),
+        net_revenue:        toNum(col(r, 'Total Penghasilan', 'Net Revenue', 'Net Diterima')),
+        expedition:         col(r, 'Opsi Pengiriman', 'Ekspedisi', 'Kurir', 'Shipping'),
+        status:             col(r, 'Status Pesanan', 'Status', 'Order Status'),
+        order_date:         toDate(col(r, 'Waktu Pesanan Dibuat', 'Tanggal Pesanan', 'Order Date')),
+        payment_date:       toDate(col(r, 'Waktu Pembayaran', 'Tanggal Bayar', 'Payment Date')),
+        source:             'shopee',
+      })).filter(r => r.order_no);
+
+      if (!records.length) {
+        res.innerHTML = `<p class="text-red-600">Tidak ada baris valid. Pastikan format file Shopee yang benar.</p>`;
+        res.className = 'mt-3 p-3 rounded-lg bg-red-50 border border-red-100 text-sm';
+        res.classList.remove('hidden');
+        return;
+      }
+
+      // Upsert — skip duplicates by order_no
+      prog.textContent = 'Menyimpan ke database...';
+      const { error, count } = await App.db()
+        .from('orders')
+        .upsert(records, { onConflict: 'order_no', ignoreDuplicates: true });
+
+      if (error) throw error;
+
+      res.innerHTML = `<p class="text-green-700">✓ Berhasil! <strong>${records.length}</strong> baris diproses. Duplikat otomatis dilewati.</p>`;
+      res.className = 'mt-3 p-3 rounded-lg bg-green-50 border border-green-100 text-sm';
+      res.classList.remove('hidden');
+      prog.classList.add('hidden');
+
+      App.toast(`Import selesai: ${records.length} pesanan`, 'success');
+      await this._loadOrders();
+      this._renderTab();
+
+    } catch (err) {
+      console.error(err);
+      prog.classList.add('hidden');
+      res.innerHTML = `<p class="text-red-600">Error: ${err.message}</p>`;
+      res.className = 'mt-3 p-3 rounded-lg bg-red-50 border border-red-100 text-sm';
+      res.classList.remove('hidden');
+    }
+  },
+
+  /* ── Tambah Manual ── */
+  openManual(order = null) {
+    const o = order || {};
+    App.openModal({
+      title: order ? 'Edit Pesanan' : 'Tambah Pesanan Manual',
+      size: 'max-w-2xl',
+      body: `
+      <div class="grid grid-cols-2 gap-4">
+        <div><label class="label">No. Pesanan</label><input id="m-order-no" class="input" value="${o.order_no||''}" placeholder="Optional"/></div>
+        <div><label class="label">Tanggal</label><input id="m-date" type="date" class="input" value="${o.order_date||App.todayISO()}"/></div>
+        <div class="col-span-2"><label class="label">Nama Produk *</label><input id="m-name" class="input" value="${o.product_name||''}" placeholder="Nama produk"/></div>
+        <div><label class="label">SKU</label><input id="m-sku" class="input" value="${o.sku||''}" placeholder="SKU"/></div>
+        <div><label class="label">Variasi</label><input id="m-var" class="input" value="${o.variation||''}" placeholder="Opsional"/></div>
+        <div><label class="label">Qty *</label><input id="m-qty" type="number" min="1" class="input" value="${o.qty||1}"/></div>
+        <div><label class="label">Harga Jual (Rp) *</label><input id="m-price" type="number" class="input" value="${o.selling_price||''}" placeholder="0" oninput="Penjualan._calcManual()"/></div>
+        <div><label class="label">Omzet / Total (Rp)</label><input id="m-gross" type="number" class="input" value="${o.gross_revenue||''}" placeholder="Otomatis dari qty × harga"/></div>
+        <div><label class="label">Net Diterima (Rp)</label><input id="m-net" type="number" class="input" value="${o.net_revenue||''}" placeholder="Setelah potongan"/></div>
+        <div><label class="label">Ekspedisi</label><input id="m-exp" class="input" value="${o.expedition||''}" placeholder="JNE, J&T, dll"/></div>
+        <div><label class="label">Status *</label>
+          <select id="m-status" class="input">
+            ${['Selesai','Dibatalkan','Gagal','Dikembalikan'].map(s=>`<option ${o.status===s?'selected':''}>${s}</option>`).join('')}
+          </select>
+        </div>
+        <div><label class="label">Sumber</label>
+          <select id="m-source" class="input">
+            <option value="offline" ${o.source==='offline'?'selected':''}>Offline</option>
+            <option value="shopee"  ${o.source==='shopee'||!o.source?'selected':''}>Shopee</option>
+          </select>
+        </div>
+        <div class="col-span-2"><label class="label">Catatan</label><input id="m-notes" class="input" value="${o.notes||''}" placeholder="Opsional"/></div>
+      </div>`,
+      footer: `
+        <button onclick="App.closeModal()" class="btn-secondary">Batal</button>
+        <button onclick="Penjualan.saveManual(${order ? `'${order.id}'` : 'null'})" class="btn-primary">Simpan</button>`,
+    });
+  },
+
+  _calcManual() {
+    const qty   = +document.getElementById('m-qty')?.value   || 1;
+    const price = +document.getElementById('m-price')?.value || 0;
+    const gross = document.getElementById('m-gross');
+    if (gross && !gross.value) gross.value = qty * price;
+  },
+
+  async saveManual(id) {
+    const name   = document.getElementById('m-name').value.trim();
+    const price  = +document.getElementById('m-price').value || 0;
+    if (!name || !price) { App.toast('Nama produk dan harga wajib diisi.', 'warning'); return; }
+
+    const qty   = +document.getElementById('m-qty').value    || 1;
+    const gross = +document.getElementById('m-gross').value  || qty * price;
+    const net   = +document.getElementById('m-net').value    || gross;
+
+    const payload = {
+      order_no:     document.getElementById('m-order-no').value.trim() || null,
+      order_date:   document.getElementById('m-date').value,
+      product_name: name,
+      sku:          document.getElementById('m-sku').value.trim(),
+      variation:    document.getElementById('m-var').value.trim(),
+      qty,
+      selling_price: price,
+      gross_revenue: gross,
+      net_revenue:   net,
+      expedition:    document.getElementById('m-exp').value.trim(),
+      status:        document.getElementById('m-status').value,
+      source:        document.getElementById('m-source').value,
+      notes:         document.getElementById('m-notes').value.trim(),
+    };
+
+    try {
+      if (id) {
+        const { error } = await App.db().from('orders').update(payload).eq('id', id);
+        if (error) throw error;
+      } else {
+        const { error } = await App.db().from('orders').insert(payload);
+        if (error) throw error;
+      }
+      App.closeModal();
+      App.toast('Pesanan disimpan!', 'success');
+      await this._loadOrders();
+      this._renderTab();
+    } catch (err) {
+      App.toast('Error: ' + err.message, 'error');
+    }
+  },
+
+  async deleteOrder(id) {
+    const ok = await App.confirm('Hapus pesanan ini? Data tidak bisa dikembalikan.');
+    if (!ok) return;
+    const { error } = await App.db().from('orders').delete().eq('id', id);
+    if (error) { App.toast('Gagal hapus: ' + error.message, 'error'); return; }
+    App.toast('Pesanan dihapus.', 'success');
+    this._orders = this._orders.filter(o => o.id !== id);
+    this._renderTab();
+  },
+};
