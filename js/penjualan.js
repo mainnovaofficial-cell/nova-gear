@@ -98,7 +98,11 @@ const Penjualan = {
 
   _renderTab() {
     const data = this._filtered();
-    document.getElementById('pj-count').textContent = `${data.length} pesanan`;
+    const uniqueOrders = new Set(data.map(o => o.order_no).filter(Boolean)).size;
+    const manualCount  = data.filter(o => !o.order_no).length;
+    const totalPesanan = uniqueOrders + manualCount;
+    document.getElementById('pj-count').textContent =
+      `${totalPesanan} pesanan · ${data.length} item`;
     const el = document.getElementById('pj-tab-content');
     if (this._tab === 'semua')   el.innerHTML = this._tableSemua(data);
     if (this._tab === 'status')  el.innerHTML = this._tableStatus(data);
@@ -107,66 +111,106 @@ const Penjualan = {
 
   _tableSemua(data) {
     if (!data.length) return `<div class="empty-state"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg><p>Tidak ada pesanan</p></div>`;
+
     const statusBadge = s => {
       const m = { Selesai:'badge-green', Dibatalkan:'badge-gray', Gagal:'badge-red', Dikembalikan:'badge-orange' };
       return `<span class="badge ${m[s]||'badge-gray'}">${s||'-'}</span>`;
     };
-    return `
-    <div class="table-wrapper">
-      <table class="data-table">
-        <thead><tr>
-          <th>No. Pesanan</th><th>Tanggal</th><th>Produk</th><th>SKU</th><th>Qty</th>
-          <th>Harga Jual</th><th>Omzet</th><th>Net</th><th>Ekspedisi</th><th>Status</th><th>Sumber</th><th></th>
-        </tr></thead>
-        <tbody>${data.map(o => `<tr>
-          <td class="font-mono text-xs text-gray-500">${o.order_no||'-'}</td>
-          <td class="whitespace-nowrap">${App.formatDate(o.order_date)}</td>
+    const deleteBtn = id => `
+      <button onclick="Penjualan.deleteOrder('${id}')" class="text-gray-300 hover:text-red-500 transition-colors" title="Hapus">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+      </button>`;
+
+    // Group rows by order_no, preserving sort order
+    const groups = [];
+    const groupMap = {};
+    for (const o of data) {
+      const key = o.order_no || ('manual_' + o.id);
+      if (!groupMap[key]) {
+        const g = { key, items: [] };
+        groups.push(g);
+        groupMap[key] = g;
+      }
+      groupMap[key].items.push(o);
+    }
+
+    const rows = groups.flatMap(g => {
+      const isMulti = g.items.length > 1;
+      return g.items.map((o, i) => {
+        const isFirst = i === 0;
+        const isLast  = i === g.items.length - 1;
+        return `<tr class="${!isFirst ? 'bg-blue-50/20' : ''} ${isLast && isMulti ? 'border-b-2 border-gray-200' : ''}">
+          <td class="font-mono text-xs ${isFirst ? 'text-gray-500' : 'text-gray-300 pl-4'}">
+            ${isFirst
+              ? (o.order_no || '<span class="text-gray-400">manual</span>') +
+                (isMulti ? ` <span class="badge badge-blue">${g.items.length} item</span>` : '')
+              : '└'}
+          </td>
+          <td class="whitespace-nowrap">${isFirst ? App.formatDate(o.order_date) : ''}</td>
           <td class="max-w-[180px] truncate" title="${o.product_name||''}">${o.product_name||'-'}</td>
           <td class="font-mono text-xs">${o.sku||'-'}</td>
           <td class="text-center">${o.qty||1}</td>
           <td class="text-money">${App.formatRupiah(o.selling_price)}</td>
           <td class="text-money">${App.formatRupiah(o.gross_revenue)}</td>
-          <td class="text-money">${App.formatRupiah(o.net_revenue)}</td>
-          <td>${o.expedition||'-'}</td>
-          <td>${statusBadge(o.status)}</td>
-          <td><span class="badge ${o.source==='offline'?'badge-orange':'badge-blue'}">${o.source||'shopee'}</span></td>
-          <td>
-            <button onclick="Penjualan.deleteOrder('${o.id}')" class="text-gray-300 hover:text-red-500 transition-colors" title="Hapus">
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-            </button>
-          </td>
-        </tr>`).join('')}</tbody>
+          <td class="text-money">${isFirst ? App.formatRupiah(o.net_revenue) : ''}</td>
+          <td>${isFirst ? (o.expedition||'-') : ''}</td>
+          <td>${isFirst ? statusBadge(o.status) : ''}</td>
+          <td>${isFirst ? `<span class="badge ${o.source==='offline'?'badge-orange':'badge-blue'}">${o.source||'shopee'}</span>` : ''}</td>
+          <td>${deleteBtn(o.id)}</td>
+        </tr>`;
+      });
+    });
+
+    return `
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead><tr>
+          <th>No. Pesanan</th><th>Tanggal</th><th>Produk</th><th>SKU</th><th>Qty</th>
+          <th>Harga Jual</th><th>Subtotal</th><th>Net</th><th>Ekspedisi</th><th>Status</th><th>Sumber</th><th></th>
+        </tr></thead>
+        <tbody>${rows.join('')}</tbody>
       </table>
     </div>`;
   },
 
   _tableStatus(data) {
     const map = {};
+    // Track net per unique order_no to avoid double-counting multi-item orders
+    const netByOrder = {};
     data.forEach(o => {
-      const s = o.status || 'Tidak Diketahui';
-      if (!map[s]) map[s] = { count: 0, omzet: 0, net: 0 };
-      map[s].count++;
+      const s   = o.status || 'Tidak Diketahui';
+      const key = o.order_no || o.id;
+      if (!map[s]) map[s] = { orderNos: new Set(), omzet: 0, net: 0 };
+      map[s].orderNos.add(key);
       map[s].omzet += +o.gross_revenue || 0;
-      map[s].net   += +o.net_revenue   || 0;
+      if (!netByOrder[key]) {
+        netByOrder[key] = +o.net_revenue || 0;
+        map[s].net += netByOrder[key];
+      }
     });
     const rows = Object.entries(map);
     if (!rows.length) return `<div class="empty-state"><p>Tidak ada data</p></div>`;
     const badgeMap = { Selesai:'badge-green', Dibatalkan:'badge-gray', Gagal:'badge-red', Dikembalikan:'badge-orange' };
+    const totalOrders = new Set(data.map(o => o.order_no || o.id)).size;
+    const totalOmzet  = data.reduce((s, o) => s + (+o.gross_revenue||0), 0);
+    const totalNet    = Object.values(netByOrder).reduce((s, v) => s + v, 0);
     return `
     <div class="table-wrapper">
       <table class="data-table">
-        <thead><tr><th>Status</th><th>Jumlah Pesanan</th><th>Total Omzet</th><th>Total Net</th></tr></thead>
+        <thead><tr><th>Status</th><th>Pesanan Unik</th><th>Total Item</th><th>Total Omzet</th><th>Total Net</th></tr></thead>
         <tbody>${rows.map(([s, v]) => `<tr>
           <td><span class="badge ${badgeMap[s]||'badge-gray'}">${s}</span></td>
-          <td class="font-semibold">${App.formatNumber(v.count)}</td>
+          <td class="font-semibold">${App.formatNumber(v.orderNos.size)}</td>
+          <td class="text-gray-500">${App.formatNumber([...v.orderNos].reduce((c, k) => c + data.filter(o=>(o.order_no||o.id)===k).length, 0))}</td>
           <td class="text-money">${App.formatRupiah(v.omzet)}</td>
           <td class="text-money">${App.formatRupiah(v.net)}</td>
         </tr>`).join('')}
         <tr class="font-semibold bg-gray-50">
           <td>Total</td>
-          <td>${App.formatNumber(data.length)}</td>
-          <td class="text-money">${App.formatRupiah(data.reduce((s,o)=>s+(+o.gross_revenue||0),0))}</td>
-          <td class="text-money">${App.formatRupiah(data.reduce((s,o)=>s+(+o.net_revenue||0),0))}</td>
+          <td>${App.formatNumber(totalOrders)}</td>
+          <td class="text-gray-500">${App.formatNumber(data.length)}</td>
+          <td class="text-money">${App.formatRupiah(totalOmzet)}</td>
+          <td class="text-money">${App.formatRupiah(totalNet)}</td>
         </tr></tbody>
       </table>
     </div>`;
@@ -174,24 +218,30 @@ const Penjualan = {
 
   _tableHarian(data) {
     const map = {};
+    const netByOrder = {};
     data.forEach(o => {
-      const d = o.order_date?.slice(0,10) || 'Tanpa Tanggal';
-      if (!map[d]) map[d] = { count: 0, omzet: 0, net: 0, selesai: 0 };
-      map[d].count++;
-      map[d].omzet   += +o.gross_revenue || 0;
-      map[d].net     += +o.net_revenue   || 0;
-      if (o.status === 'Selesai') map[d].selesai++;
+      const d   = o.order_date?.slice(0,10) || 'Tanpa Tanggal';
+      const key = o.order_no || o.id;
+      if (!map[d]) map[d] = { orderNos: new Set(), selesaiNos: new Set(), omzet: 0, net: 0 };
+      map[d].orderNos.add(key);
+      map[d].omzet += +o.gross_revenue || 0;
+      if (!netByOrder[key]) {
+        netByOrder[key] = { d, net: +o.net_revenue || 0 };
+        map[d].net += netByOrder[key].net;
+      }
+      if (o.status === 'Selesai') map[d].selesaiNos.add(key);
     });
     const rows = Object.entries(map).sort((a,b) => b[0].localeCompare(a[0]));
     if (!rows.length) return `<div class="empty-state"><p>Tidak ada data</p></div>`;
     return `
     <div class="table-wrapper">
       <table class="data-table">
-        <thead><tr><th>Tanggal</th><th>Total Pesanan</th><th>Selesai</th><th>Total Omzet</th><th>Total Net</th></tr></thead>
+        <thead><tr><th>Tanggal</th><th>Total Pesanan</th><th>Total Item</th><th>Selesai</th><th>Total Omzet</th><th>Total Net</th></tr></thead>
         <tbody>${rows.map(([d, v]) => `<tr>
           <td class="font-medium">${App.formatDate(d)}</td>
-          <td>${App.formatNumber(v.count)}</td>
-          <td><span class="badge badge-green">${v.selesai}</span></td>
+          <td class="font-semibold">${App.formatNumber(v.orderNos.size)}</td>
+          <td class="text-gray-500">${App.formatNumber(data.filter(o=>(o.order_date?.slice(0,10)||'Tanpa Tanggal')===d).length)}</td>
+          <td><span class="badge badge-green">${v.selesaiNos.size}</span></td>
           <td class="text-money">${App.formatRupiah(v.omzet)}</td>
           <td class="text-money">${App.formatRupiah(v.net)}</td>
         </tr>`).join('')}</tbody>
@@ -339,17 +389,17 @@ const Penjualan = {
         return;
       }
 
-      // Fetch existing order_nos to detect duplicates manually (no constraint dependency)
+      // Fetch existing (order_no, sku) pairs to detect duplicates by composite key
       prog.textContent = 'Mengecek duplikat di database...';
-      const orderNos = records.map(r => r.order_no).filter(Boolean);
+      const orderNos = [...new Set(records.map(r => r.order_no).filter(Boolean))];
       const { data: existing, error: fetchErr } = await App.db()
         .from('orders')
-        .select('order_no')
+        .select('order_no, sku')
         .in('order_no', orderNos);
       if (fetchErr) throw fetchErr;
 
-      const existingSet = new Set((existing || []).map(r => r.order_no));
-      const newRecords  = records.filter(r => !existingSet.has(r.order_no));
+      const existingSet = new Set((existing || []).map(r => `${r.order_no}||${r.sku||''}`));
+      const newRecords  = records.filter(r => !existingSet.has(`${r.order_no}||${r.sku||''}`));
       const skipped     = records.length - newRecords.length;
 
       if (!newRecords.length) {
