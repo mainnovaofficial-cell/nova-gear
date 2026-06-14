@@ -339,23 +339,41 @@ const Penjualan = {
         return;
       }
 
-      prog.textContent = `Menyimpan ${records.length} pesanan ke database...`;
-
-      const { error } = await App.db()
+      // Fetch existing order_nos to detect duplicates manually (no constraint dependency)
+      prog.textContent = 'Mengecek duplikat di database...';
+      const orderNos = records.map(r => r.order_no).filter(Boolean);
+      const { data: existing, error: fetchErr } = await App.db()
         .from('orders')
-        .upsert(records, { onConflict: 'order_no', ignoreDuplicates: true });
+        .select('order_no')
+        .in('order_no', orderNos);
+      if (fetchErr) throw fetchErr;
+
+      const existingSet = new Set((existing || []).map(r => r.order_no));
+      const newRecords  = records.filter(r => !existingSet.has(r.order_no));
+      const skipped     = records.length - newRecords.length;
+
+      if (!newRecords.length) {
+        res.innerHTML = `<p class="text-orange-700">Semua <strong>${records.length}</strong> pesanan sudah ada di database. Tidak ada data baru.</p>`;
+        res.className = 'mt-3 p-3 rounded-lg bg-orange-50 border border-orange-100 text-sm';
+        res.classList.remove('hidden');
+        prog.classList.add('hidden');
+        return;
+      }
+
+      prog.textContent = `Menyimpan ${newRecords.length} pesanan baru...`;
+      const { error } = await App.db().from('orders').insert(newRecords);
       if (error) throw error;
 
-      const totalOmzet = records.reduce((s, r) => s + r.gross_revenue, 0);
-      const totalNet   = records.reduce((s, r) => s + r.net_revenue,   0);
+      const totalOmzet = newRecords.reduce((s, r) => s + r.gross_revenue, 0);
+      const totalNet   = newRecords.reduce((s, r) => s + r.net_revenue,   0);
 
       res.innerHTML = `
         <div class="space-y-1">
           <p class="font-semibold text-green-700">✓ Import berhasil!</p>
-          <p>Pesanan Selesai: <strong>${records.length}</strong></p>
+          <p>Pesanan baru: <strong>${newRecords.length}</strong></p>
+          ${skipped ? `<p>Dilewati (sudah ada): <strong>${skipped}</strong></p>` : ''}
           <p>Total Omzet: <strong>${App.formatRupiah(totalOmzet)}</strong></p>
           <p>Total Net Diterima: <strong>${App.formatRupiah(totalNet)}</strong></p>
-          <p class="text-xs text-gray-400 mt-1">Duplikat (No. Pesanan sudah ada) dilewati otomatis.</p>
         </div>`;
       res.className = 'mt-3 p-3 rounded-lg bg-green-50 border border-green-100 text-sm';
       res.classList.remove('hidden');

@@ -40,9 +40,10 @@ create table if not exists orders (
   created_at          timestamptz default now()
 );
 
-create index if not exists orders_status_idx     on orders(status);
-create index if not exists orders_order_date_idx on orders(order_date);
-create index if not exists orders_sku_idx        on orders(sku);
+create unique index if not exists orders_order_no_key on orders(order_no) where order_no is not null;
+create index if not exists orders_status_idx          on orders(status);
+create index if not exists orders_order_date_idx      on orders(order_date);
+create index if not exists orders_sku_idx             on orders(sku);
 
 -- ── Scan logs (scanner packing)
 create table if not exists scan_logs (
@@ -200,6 +201,9 @@ create table if not exists income_summary (
   created_at            timestamptz default now(),
   unique (bulan, tahun)
 );
+
+-- Tambah unique index pada order_no (partial — NULL diizinkan untuk pesanan manual)
+create unique index if not exists orders_order_no_key on orders(order_no) where order_no is not null;
 
 -- Hapus kolom settings lama yang sudah diganti
 delete from settings where key in ('shopee_commission_pct', 'shopee_ads_fee_pct');
