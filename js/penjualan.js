@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════
    Nova Gear — Penjualan Module
-   Import Shopee xlsx, tambah manual, 3 tab view
+   3 import terpisah: Pesanan / Retur-Batal / Income
 ═══════════════════════════════════════════════════════ */
 'use strict';
 
@@ -25,9 +25,17 @@ const Penjualan = {
         <p>Import file Shopee atau tambah pesanan manual</p>
       </div>
       <div class="flex gap-2 flex-wrap">
-        <button onclick="Penjualan.openImport()" class="btn-secondary text-xs">
+        <button onclick="Penjualan.openImportPesanan()" class="btn-secondary text-xs">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-          Import Shopee
+          Import Pesanan
+        </button>
+        <button onclick="Penjualan.openImportRetBatal()" class="btn-secondary text-xs">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8l1 12a2 2 0 002 2h8a2 2 0 002-2L19 8M10 12v4m4-4v4"/></svg>
+          Import Retur/Batal
+        </button>
+        <button onclick="Penjualan.openImportIncome()" class="btn-secondary text-xs">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+          Import Income
         </button>
         <button onclick="Penjualan.openManual()" class="btn-primary text-xs">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
@@ -208,102 +216,147 @@ const Penjualan = {
     this._renderTab();
   },
 
-  _bindFilter() {
-    // Already wired via inline oninput/onchange
+  _bindFilter() {},
+
+  /* ─────────────────────────────────────────
+     SHARED HELPERS
+  ───────────────────────────────────────── */
+  _col(row, ...keys) {
+    for (const k of keys) {
+      if (row[k] !== undefined && row[k] !== '') return row[k];
+    }
+    return '';
   },
 
-  /* ── Import Shopee xlsx ── */
-  openImport() {
+  _toNum(v) {
+    return parseFloat(String(v).replace(/[^0-9.-]/g, '')) || 0;
+  },
+
+  _toDate(v) {
+    if (!v) return null;
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    const s = String(v);
+    const m = s.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+    if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    return null;
+  },
+
+  _importDropZone(inputId, accept, label, colorClass) {
+    return `
+    <div class="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer
+                hover:border-${colorClass}-300 hover:bg-${colorClass}-50/30 transition-colors"
+         onclick="document.getElementById('${inputId}').click()">
+      <svg class="w-10 h-10 text-gray-300 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+          d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+      </svg>
+      <p class="text-sm text-gray-500">${label}</p>
+    </div>`;
+  },
+
+  /* ─────────────────────────────────────────
+     1. IMPORT PESANAN (xlsx — status Selesai)
+  ───────────────────────────────────────── */
+  openImportPesanan() {
     App.openModal({
-      title: 'Import File Shopee',
+      title: 'Import File Pesanan Shopee',
+      size: 'max-w-xl',
       body: `
-        <p class="text-sm text-gray-600 mb-4">Upload file <strong>.xlsx</strong> hasil export dari Shopee Seller Center.<br>
-        Pesanan yang sudah ada (berdasarkan No. Pesanan) akan dilewati.</p>
-        <div id="import-drop" class="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer hover:border-blue-300 hover:bg-blue-50/30 transition-colors" onclick="document.getElementById('import-file').click()">
-          <svg class="w-10 h-10 text-gray-300 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-          <p class="text-sm text-gray-500">Klik atau seret file xlsx ke sini</p>
-          <input id="import-file" type="file" accept=".xlsx,.xls,.csv" class="hidden" onchange="Penjualan.importFile(this.files[0])"/>
+        <p class="text-sm text-gray-600 mb-3">Upload file <strong>.xlsx</strong> pesanan dari Shopee Seller Center.
+        Hanya baris berstatus <strong>Selesai</strong> yang diimport. Duplikat (No. Pesanan sama) dilewati.</p>
+        <div class="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700 mb-4">
+          <p class="font-semibold mb-1">Kolom yang dipetakan:</p>
+          <p>No. Pesanan · Status Pesanan · Nomor Referensi SKU · Nama Produk · Nama Variasi</p>
+          <p>Harga Setelah Diskon · Jumlah · Subtotal Pesanan · Voucher Ditanggung Penjual</p>
+          <p>Total Pembayaran · Waktu Pesanan Dibuat · Opsi Pengiriman</p>
         </div>
-        <div id="import-progress" class="hidden mt-4 text-sm text-blue-600 text-center font-medium"></div>
-        <div id="import-result"   class="hidden mt-3 p-3 rounded-lg text-sm"></div>`,
+        <div class="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer
+                    hover:border-blue-300 hover:bg-blue-50/30 transition-colors"
+             onclick="document.getElementById('imp-pesanan-file').click()">
+          <svg class="w-10 h-10 text-gray-300 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+          </svg>
+          <p class="text-sm text-gray-500">Klik atau seret file .xlsx ke sini</p>
+          <input id="imp-pesanan-file" type="file" accept=".xlsx,.xls" class="hidden"
+                 onchange="Penjualan.importPesananFile(this.files[0])"/>
+        </div>
+        <div id="imp-progress" class="hidden mt-4 text-sm text-blue-600 text-center font-medium"></div>
+        <div id="imp-result"   class="hidden mt-3 p-3 rounded-lg text-sm"></div>`,
     });
   },
 
-  async importFile(file) {
+  async importPesananFile(file) {
     if (!file) return;
-    const prog = document.getElementById('import-progress');
-    const res  = document.getElementById('import-result');
+    const prog = document.getElementById('imp-progress');
+    const res  = document.getElementById('imp-result');
     prog.textContent = 'Membaca file...';
     prog.classList.remove('hidden');
     res.classList.add('hidden');
 
     try {
-      const buf = await file.arrayBuffer();
-      const wb  = XLSX.read(buf, { type: 'array', cellDates: true });
-      const ws  = wb.Sheets[wb.SheetNames[0]];
+      const buf  = await file.arrayBuffer();
+      const wb   = XLSX.read(buf, { type: 'array', cellDates: true });
+      const ws   = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, { raw: false, defval: '' });
 
-      if (!rows.length) { App.toast('File kosong atau tidak terbaca.', 'error'); return; }
+      if (!rows.length) throw new Error('File kosong atau tidak dapat dibaca.');
 
-      prog.textContent = `Memproses ${rows.length} baris...`;
+      prog.textContent = `Memfilter baris Selesai dari ${rows.length} baris...`;
 
-      // Flexible column mapping
-      const col = (row, ...candidates) => {
-        for (const c of candidates) {
-          if (row[c] !== undefined && row[c] !== '') return row[c];
-        }
-        return '';
-      };
+      const col    = this._col.bind(this);
+      const toNum  = this._toNum.bind(this);
+      const toDate = this._toDate.bind(this);
 
-      const toNum = v => parseFloat(String(v).replace(/[^0-9.-]/g, '')) || 0;
-      const toDate = v => {
-        if (!v) return null;
-        if (v instanceof Date) return v.toISOString().slice(0,10);
-        const s = String(v);
-        const m = s.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-        if (m) return `${m[3]}-${m[2]}-${m[1]}`;
-        const m2 = s.match(/(\d{4})-(\d{2})-(\d{2})/);
-        if (m2) return s.slice(0,10);
-        return null;
-      };
-
-      const records = rows.map(r => ({
-        order_no:           col(r, 'No. Pesanan', 'No Pesanan', 'Order ID'),
-        invoice_no:         col(r, 'No. Invoice', 'No Invoice'),
-        product_name:       col(r, 'Nama Produk', 'Product Name', 'Nama Barang'),
-        sku:                col(r, 'No. SKU Produk', 'SKU', 'Kode Produk'),
-        variation:          col(r, 'Nama Variasi', 'Variasi'),
-        qty:                toNum(col(r, 'Jumlah', 'Qty', 'Quantity')) || 1,
-        selling_price:      toNum(col(r, 'Harga Setelah Diskon', 'Harga Jual', 'Unit Price')),
-        gross_revenue:      toNum(col(r, 'Total Harga Setelah Diskon', 'Total Harga Produk', 'Subtotal')),
-        shopee_commission:  toNum(col(r, 'Komisi Shopee (Rp)', 'Komisi Shopee', 'Commission')),
-        shopee_service_fee: toNum(col(r, 'Biaya Layanan (Incl. PPN 11%)', 'Biaya Layanan', 'Service Fee')),
-        shopee_ads_fee:     toNum(col(r, 'Biaya Program', 'Biaya Iklan')),
-        shopee_other_fee:   toNum(col(r, 'Biaya Transaksi', 'Biaya Lain')),
-        net_revenue:        toNum(col(r, 'Total Penghasilan', 'Net Revenue', 'Net Diterima')),
-        expedition:         col(r, 'Opsi Pengiriman', 'Ekspedisi', 'Kurir', 'Shipping'),
-        status:             col(r, 'Status Pesanan', 'Status', 'Order Status'),
-        order_date:         toDate(col(r, 'Waktu Pesanan Dibuat', 'Tanggal Pesanan', 'Order Date')),
-        payment_date:       toDate(col(r, 'Waktu Pembayaran', 'Tanggal Bayar', 'Payment Date')),
-        source:             'shopee',
-      })).filter(r => r.order_no);
+      const records = rows
+        .filter(r => {
+          const s = col(r, 'Status Pesanan', 'Status', 'Order Status');
+          return s === 'Selesai' || s === 'Completed';
+        })
+        .map(r => ({
+          order_no:         col(r, 'No. Pesanan', 'No Pesanan', 'Order ID'),
+          sku:              col(r, 'Nomor Referensi SKU', 'No. SKU Produk', 'SKU'),
+          product_name:     col(r, 'Nama Produk', 'Product Name'),
+          variation:        col(r, 'Nama Variasi', 'Variasi'),
+          selling_price:    toNum(col(r, 'Harga Setelah Diskon', 'Harga Jual', 'Unit Price')),
+          qty:              toNum(col(r, 'Jumlah', 'Qty', 'Quantity')) || 1,
+          gross_revenue:    toNum(col(r, 'Subtotal Pesanan', 'Total Harga Setelah Diskon', 'Subtotal')),
+          shopee_other_fee: toNum(col(r, 'Voucher Ditanggung Penjual', 'Voucher Seller')),
+          net_revenue:      toNum(col(r, 'Total Pembayaran', 'Total Penghasilan', 'Net Revenue')),
+          order_date:       toDate(col(r, 'Waktu Pesanan Dibuat', 'Tanggal Pesanan', 'Order Date')),
+          expedition:       col(r, 'Opsi Pengiriman', 'Ekspedisi', 'Kurir', 'Shipping'),
+          status:           'Selesai',
+          source:           'shopee',
+        }))
+        .filter(r => r.order_no);
 
       if (!records.length) {
-        res.innerHTML = `<p class="text-red-600">Tidak ada baris valid. Pastikan format file Shopee yang benar.</p>`;
-        res.className = 'mt-3 p-3 rounded-lg bg-red-50 border border-red-100 text-sm';
+        res.innerHTML = `<p class="text-orange-700">Tidak ada pesanan berstatus <strong>Selesai</strong> di file ini.</p>`;
+        res.className = 'mt-3 p-3 rounded-lg bg-orange-50 border border-orange-100 text-sm';
         res.classList.remove('hidden');
+        prog.classList.add('hidden');
         return;
       }
 
-      // Upsert — skip duplicates by order_no
-      prog.textContent = 'Menyimpan ke database...';
-      const { error, count } = await App.db()
+      prog.textContent = `Menyimpan ${records.length} pesanan ke database...`;
+
+      const { error } = await App.db()
         .from('orders')
         .upsert(records, { onConflict: 'order_no', ignoreDuplicates: true });
-
       if (error) throw error;
 
-      res.innerHTML = `<p class="text-green-700">✓ Berhasil! <strong>${records.length}</strong> baris diproses. Duplikat otomatis dilewati.</p>`;
+      const totalOmzet = records.reduce((s, r) => s + r.gross_revenue, 0);
+      const totalNet   = records.reduce((s, r) => s + r.net_revenue,   0);
+
+      res.innerHTML = `
+        <div class="space-y-1">
+          <p class="font-semibold text-green-700">✓ Import berhasil!</p>
+          <p>Pesanan Selesai: <strong>${records.length}</strong></p>
+          <p>Total Omzet: <strong>${App.formatRupiah(totalOmzet)}</strong></p>
+          <p>Total Net Diterima: <strong>${App.formatRupiah(totalNet)}</strong></p>
+          <p class="text-xs text-gray-400 mt-1">Duplikat (No. Pesanan sudah ada) dilewati otomatis.</p>
+        </div>`;
       res.className = 'mt-3 p-3 rounded-lg bg-green-50 border border-green-100 text-sm';
       res.classList.remove('hidden');
       prog.classList.add('hidden');
@@ -313,7 +366,6 @@ const Penjualan = {
       this._renderTab();
 
     } catch (err) {
-      console.error(err);
       prog.classList.add('hidden');
       res.innerHTML = `<p class="text-red-600">Error: ${err.message}</p>`;
       res.className = 'mt-3 p-3 rounded-lg bg-red-50 border border-red-100 text-sm';
@@ -321,7 +373,274 @@ const Penjualan = {
     }
   },
 
-  /* ── Tambah Manual ── */
+  /* ─────────────────────────────────────────
+     2. IMPORT RETUR / BATAL (ZIP berisi 2 xlsx)
+  ───────────────────────────────────────── */
+  openImportRetBatal() {
+    App.openModal({
+      title: 'Import Retur & Batal / Gagal Kirim',
+      size: 'max-w-xl',
+      body: `
+        <p class="text-sm text-gray-600 mb-3">Upload file <strong>.zip</strong> dari Shopee yang berisi 2 file .xlsx
+        (cancelled & failed delivery). Deteksi tipe otomatis dari header kolom.</p>
+        <div class="bg-amber-50 border border-amber-100 rounded-lg p-3 text-xs text-amber-800 mb-4 space-y-2">
+          <div>
+            <p class="font-semibold">File Cancelled (Pesanan Dibatalkan) — kategori: Batal</p>
+            <p class="text-amber-700">No. Pesanan · Alasan Pembatalan · SKU · Nama Produk · Subtotal Pesanan · Waktu Pesanan Dibuat</p>
+          </div>
+          <div>
+            <p class="font-semibold">File Failed Delivery (Gagal Kirim) — kategori: Gagal Kirim</p>
+            <p class="text-amber-700">No. Pesanan · Status Pengiriman · SKU · Nama Produk · Subtotal Pesanan</p>
+          </div>
+        </div>
+        <div class="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer
+                    hover:border-amber-300 hover:bg-amber-50/30 transition-colors"
+             onclick="document.getElementById('imp-ret-file').click()">
+          <svg class="w-10 h-10 text-gray-300 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8l1 12a2 2 0 002 2h8a2 2 0 002-2L19 8M10 12v4m4-4v4"/>
+          </svg>
+          <p class="text-sm text-gray-500">Klik atau seret file .zip ke sini</p>
+          <input id="imp-ret-file" type="file" accept=".zip" class="hidden"
+                 onchange="Penjualan.importRetBatalFile(this.files[0])"/>
+        </div>
+        <div id="ret-progress" class="hidden mt-4 text-sm text-amber-600 text-center font-medium"></div>
+        <div id="ret-result"   class="hidden mt-3 p-3 rounded-lg text-sm"></div>`,
+    });
+  },
+
+  async importRetBatalFile(file) {
+    if (!file) return;
+    const prog = document.getElementById('ret-progress');
+    const res  = document.getElementById('ret-result');
+    prog.textContent = 'Membaca file ZIP...';
+    prog.classList.remove('hidden');
+    res.classList.add('hidden');
+
+    try {
+      if (typeof JSZip === 'undefined') throw new Error('Library JSZip belum dimuat. Coba reload halaman.');
+
+      const zip      = await JSZip.loadAsync(file);
+      const entries  = Object.values(zip.files).filter(f => !f.dir && /\.(xlsx|xls)$/i.test(f.name));
+
+      if (!entries.length) throw new Error('Tidak ada file .xlsx di dalam ZIP.');
+
+      const col    = this._col.bind(this);
+      const toNum  = this._toNum.bind(this);
+      const toDate = this._toDate.bind(this);
+
+      let allRecords = [];
+
+      for (const entry of entries) {
+        prog.textContent = `Memproses: ${entry.name}...`;
+        const buf  = await entry.async('arraybuffer');
+        const wb   = XLSX.read(buf, { type: 'array', cellDates: true });
+        const ws   = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { raw: false, defval: '' });
+        if (!rows.length) continue;
+
+        // Detect type: if any header contains "Alasan" or "Pembatalan" → Batal, else → Gagal Kirim
+        const headers     = Object.keys(rows[0] || {});
+        const isCancelled = headers.some(h => /alasan|pembatalan|cancel/i.test(h));
+        const category    = isCancelled ? 'Batal' : 'Gagal Kirim';
+
+        const recs = rows
+          .map(r => ({
+            order_no:        col(r, 'No. Pesanan', 'No Pesanan', 'Order ID'),
+            category,
+            cancel_reason:   isCancelled
+              ? col(r, 'Alasan Pembatalan', 'Cancel Reason', 'Cancellation Reason')
+              : null,
+            delivery_status: !isCancelled
+              ? col(r, 'Status Pengiriman', 'Status pengiriman gagal', 'Delivery Status', 'Status Gagal')
+              : null,
+            sku:             col(r, 'Nomor Referensi SKU', 'No. SKU Produk', 'SKU'),
+            product_name:    col(r, 'Nama Produk', 'Product Name'),
+            gross_revenue:   toNum(col(r, 'Subtotal Pesanan', 'Subtotal', 'Total Harga')),
+            order_date:      toDate(col(r, 'Waktu Pesanan Dibuat', 'Tanggal Pesanan', 'Order Date')),
+          }))
+          .filter(r => r.order_no);
+
+        allRecords.push(...recs);
+      }
+
+      if (!allRecords.length) {
+        res.innerHTML = `<p class="text-orange-700">Tidak ada data valid ditemukan di file ZIP.</p>`;
+        res.className = 'mt-3 p-3 rounded-lg bg-orange-50 border border-orange-100 text-sm';
+        res.classList.remove('hidden');
+        prog.classList.add('hidden');
+        return;
+      }
+
+      prog.textContent = `Menyimpan ${allRecords.length} data ke database...`;
+      const { error } = await App.db()
+        .from('returns')
+        .upsert(allRecords, { onConflict: 'order_no,category', ignoreDuplicates: true });
+      if (error) throw error;
+
+      const nBatal = allRecords.filter(r => r.category === 'Batal').length;
+      const nGagal = allRecords.filter(r => r.category === 'Gagal Kirim').length;
+
+      res.innerHTML = `
+        <div class="space-y-1">
+          <p class="font-semibold text-green-700">✓ Import berhasil!</p>
+          <p>Pesanan Dibatalkan: <strong>${nBatal}</strong></p>
+          <p>Gagal Kirim: <strong>${nGagal}</strong></p>
+          <p>Total: <strong>${allRecords.length}</strong> data</p>
+          <p class="text-xs text-gray-400 mt-1">Duplikat (No. Pesanan + kategori sama) dilewati otomatis.</p>
+        </div>`;
+      res.className = 'mt-3 p-3 rounded-lg bg-green-50 border border-green-100 text-sm';
+      res.classList.remove('hidden');
+      prog.classList.add('hidden');
+
+      App.toast(`Import retur/batal: ${allRecords.length} data`, 'success');
+
+    } catch (err) {
+      prog.classList.add('hidden');
+      res.innerHTML = `<p class="text-red-600">Error: ${err.message}</p>`;
+      res.className = 'mt-3 p-3 rounded-lg bg-red-50 border border-red-100 text-sm';
+      res.classList.remove('hidden');
+    }
+  },
+
+  /* ─────────────────────────────────────────
+     3. IMPORT INCOME / PENGHASILAN (xlsx — sheet Summary)
+  ───────────────────────────────────────── */
+  openImportIncome() {
+    const now = new Date();
+    const bulanNames = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+    App.openModal({
+      title: 'Import File Income / Penghasilan',
+      size: 'max-w-xl',
+      body: `
+        <p class="text-sm text-gray-600 mb-3">Upload file <strong>.xlsx</strong> penghasilan Shopee.
+        Nilai diambil dari sheet <strong>Summary / Ringkasan</strong>.</p>
+        <div class="bg-green-50 border border-green-100 rounded-lg p-3 text-xs text-green-800 mb-4">
+          <p class="font-semibold mb-1">Field yang diambil:</p>
+          <p>Total Pendapatan · Voucher Penjual · Biaya Komisi AMS · Biaya Administrasi</p>
+          <p>Biaya Layanan · Biaya Proses Pesanan · Premi · Total yang Dilepas</p>
+        </div>
+        <div class="grid grid-cols-2 gap-3 mb-4">
+          <div><label class="label">Bulan</label>
+            <select id="inc-bulan" class="input">
+              ${bulanNames.map((m, i) => `<option value="${i+1}" ${i+1 === now.getMonth()+1 ? 'selected':''}>${m}</option>`).join('')}
+            </select>
+          </div>
+          <div><label class="label">Tahun</label>
+            <input id="inc-tahun" type="number" class="input" value="${now.getFullYear()}" min="2020" max="2035"/>
+          </div>
+        </div>
+        <div class="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer
+                    hover:border-green-300 hover:bg-green-50/30 transition-colors"
+             onclick="document.getElementById('imp-inc-file').click()">
+          <svg class="w-10 h-10 text-gray-300 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+          </svg>
+          <p class="text-sm text-gray-500">Klik atau seret file .xlsx ke sini</p>
+          <input id="imp-inc-file" type="file" accept=".xlsx,.xls" class="hidden"
+                 onchange="Penjualan.importIncomeFile(this.files[0])"/>
+        </div>
+        <div id="inc-progress" class="hidden mt-4 text-sm text-green-600 text-center font-medium"></div>
+        <div id="inc-result"   class="hidden mt-3 p-3 rounded-lg text-sm"></div>`,
+    });
+  },
+
+  async importIncomeFile(file) {
+    if (!file) return;
+    const prog  = document.getElementById('inc-progress');
+    const res   = document.getElementById('inc-result');
+    const bulan = parseInt(document.getElementById('inc-bulan').value);
+    const tahun = parseInt(document.getElementById('inc-tahun').value);
+
+    prog.textContent = 'Membaca file...';
+    prog.classList.remove('hidden');
+    res.classList.add('hidden');
+
+    try {
+      const buf = await file.arrayBuffer();
+      const wb  = XLSX.read(buf, { type: 'array', cellDates: true });
+
+      // Find the Summary/Ringkasan sheet
+      const sheetName = wb.SheetNames.find(n => /summary|ringkasan/i.test(n)) || wb.SheetNames[0];
+      const ws        = wb.Sheets[sheetName];
+
+      // Read as raw rows (header:1) to handle non-tabular key-value layout
+      const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+
+      // Build a flat label→value map from any adjacent pair of non-empty cells in each row
+      const valMap = {};
+      for (const row of rawRows) {
+        for (let i = 0; i < row.length - 1; i++) {
+          const label = String(row[i]).trim();
+          const value = String(row[i + 1]).trim();
+          if (label && value && /\d/.test(value)) valMap[label.toLowerCase()] = value;
+        }
+      }
+
+      const findVal = (...terms) => {
+        for (const term of terms) {
+          for (const [label, value] of Object.entries(valMap)) {
+            if (label.includes(term.toLowerCase())) {
+              return this._toNum(value);
+            }
+          }
+        }
+        return 0;
+      };
+
+      const record = {
+        bulan,
+        tahun,
+        total_pendapatan:     findVal('total pendapatan', 'total revenue', 'pendapatan kotor'),
+        voucher_penjual:      findVal('voucher penjual', 'seller voucher'),
+        biaya_komisi_ams:     findVal('komisi ams', 'ams commission', 'biaya komisi'),
+        biaya_administrasi:   findVal('biaya administrasi', 'admin fee', 'administration fee'),
+        biaya_layanan:        findVal('biaya layanan', 'service fee', 'layanan'),
+        biaya_proses_pesanan: findVal('biaya proses pesanan', 'processing fee', 'proses pesanan'),
+        premi:                findVal('premi', 'premium'),
+        total_dilepas:        findVal('total yang dilepas', 'total released', 'total dilepas'),
+      };
+
+      prog.textContent = 'Menyimpan ke database...';
+      const { error } = await App.db()
+        .from('income_summary')
+        .upsert(record, { onConflict: 'bulan,tahun' });
+      if (error) throw error;
+
+      const bulanNames = ['','Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+
+      res.innerHTML = `
+        <div class="space-y-1">
+          <p class="font-semibold text-green-700">✓ Income ${bulanNames[bulan]} ${tahun} berhasil disimpan!</p>
+          <div class="mt-2 space-y-0.5 text-xs text-gray-700 border-t border-gray-100 pt-2">
+            <p>Total Pendapatan: <strong>${App.formatRupiah(record.total_pendapatan)}</strong></p>
+            <p>Voucher Penjual: <strong>${App.formatRupiah(record.voucher_penjual)}</strong></p>
+            <p>Biaya Komisi AMS: <strong>${App.formatRupiah(record.biaya_komisi_ams)}</strong></p>
+            <p>Biaya Administrasi: <strong>${App.formatRupiah(record.biaya_administrasi)}</strong></p>
+            <p>Biaya Layanan: <strong>${App.formatRupiah(record.biaya_layanan)}</strong></p>
+            <p>Biaya Proses Pesanan: <strong>${App.formatRupiah(record.biaya_proses_pesanan)}</strong></p>
+            <p>Premi: <strong>${App.formatRupiah(record.premi)}</strong></p>
+            <p class="font-semibold pt-1 border-t border-gray-100">Total yang Dilepas: <strong>${App.formatRupiah(record.total_dilepas)}</strong></p>
+          </div>
+        </div>`;
+      res.className = 'mt-3 p-3 rounded-lg bg-green-50 border border-green-100 text-sm';
+      res.classList.remove('hidden');
+      prog.classList.add('hidden');
+
+      App.toast(`Income ${bulanNames[bulan]} ${tahun} berhasil diimport!`, 'success');
+
+    } catch (err) {
+      prog.classList.add('hidden');
+      res.innerHTML = `<p class="text-red-600">Error: ${err.message}</p>`;
+      res.className = 'mt-3 p-3 rounded-lg bg-red-50 border border-red-100 text-sm';
+      res.classList.remove('hidden');
+    }
+  },
+
+  /* ─────────────────────────────────────────
+     TAMBAH MANUAL
+  ───────────────────────────────────────── */
   openManual(order = null) {
     const o = order || {};
     App.openModal({
@@ -366,13 +685,13 @@ const Penjualan = {
   },
 
   async saveManual(id) {
-    const name   = document.getElementById('m-name').value.trim();
-    const price  = +document.getElementById('m-price').value || 0;
+    const name  = document.getElementById('m-name').value.trim();
+    const price = +document.getElementById('m-price').value || 0;
     if (!name || !price) { App.toast('Nama produk dan harga wajib diisi.', 'warning'); return; }
 
-    const qty   = +document.getElementById('m-qty').value    || 1;
-    const gross = +document.getElementById('m-gross').value  || qty * price;
-    const net   = +document.getElementById('m-net').value    || gross;
+    const qty   = +document.getElementById('m-qty').value   || 1;
+    const gross = +document.getElementById('m-gross').value || qty * price;
+    const net   = +document.getElementById('m-net').value   || gross;
 
     const payload = {
       order_no:     document.getElementById('m-order-no').value.trim() || null,

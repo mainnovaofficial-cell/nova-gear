@@ -106,6 +106,43 @@ create table if not exists operational (
   created_at  timestamptz default now()
 );
 
+-- ── Returns (pesanan dibatalkan & gagal kirim)
+create table if not exists returns (
+  id              uuid primary key default gen_random_uuid(),
+  order_no        text not null,
+  category        text not null,   -- 'Batal' | 'Gagal Kirim'
+  cancel_reason   text,
+  delivery_status text,
+  sku             text,
+  product_name    text,
+  gross_revenue   numeric(14,2) default 0,
+  order_date      date,
+  created_at      timestamptz default now(),
+  unique (order_no, category)
+);
+
+create index if not exists returns_category_idx  on returns(category);
+create index if not exists returns_order_no_idx  on returns(order_no);
+
+-- ── Income Summary (ringkasan penghasilan per bulan dari Shopee)
+create table if not exists income_summary (
+  id                    uuid primary key default gen_random_uuid(),
+  bulan                 integer not null check (bulan between 1 and 12),
+  tahun                 integer not null,
+  total_pendapatan      numeric(14,2) default 0,
+  voucher_penjual       numeric(14,2) default 0,
+  biaya_komisi_ams      numeric(14,2) default 0,
+  biaya_administrasi    numeric(14,2) default 0,
+  biaya_layanan         numeric(14,2) default 0,
+  biaya_proses_pesanan  numeric(14,2) default 0,
+  premi                 numeric(14,2) default 0,
+  total_dilepas         numeric(14,2) default 0,
+  created_at            timestamptz default now(),
+  unique (bulan, tahun)
+);
+
+create index if not exists income_summary_period_idx on income_summary(tahun, bulan);
+
 -- ── Settings (pengaturan aplikasi)
 create table if not exists settings (
   id         uuid primary key default gen_random_uuid(),
@@ -132,6 +169,37 @@ on conflict (key) do nothing;
 --  MIGRASI — jalankan jika database sudah ada sebelumnya
 --  (skip jika baru setup dari awal)
 -- ═══════════════════════════════════════════════════════
+
+-- Tambah tabel baru (jika belum ada)
+create table if not exists returns (
+  id              uuid primary key default gen_random_uuid(),
+  order_no        text not null,
+  category        text not null,
+  cancel_reason   text,
+  delivery_status text,
+  sku             text,
+  product_name    text,
+  gross_revenue   numeric(14,2) default 0,
+  order_date      date,
+  created_at      timestamptz default now(),
+  unique (order_no, category)
+);
+
+create table if not exists income_summary (
+  id                    uuid primary key default gen_random_uuid(),
+  bulan                 integer not null check (bulan between 1 and 12),
+  tahun                 integer not null,
+  total_pendapatan      numeric(14,2) default 0,
+  voucher_penjual       numeric(14,2) default 0,
+  biaya_komisi_ams      numeric(14,2) default 0,
+  biaya_administrasi    numeric(14,2) default 0,
+  biaya_layanan         numeric(14,2) default 0,
+  biaya_proses_pesanan  numeric(14,2) default 0,
+  premi                 numeric(14,2) default 0,
+  total_dilepas         numeric(14,2) default 0,
+  created_at            timestamptz default now(),
+  unique (bulan, tahun)
+);
 
 -- Hapus kolom settings lama yang sudah diganti
 delete from settings where key in ('shopee_commission_pct', 'shopee_ads_fee_pct');
