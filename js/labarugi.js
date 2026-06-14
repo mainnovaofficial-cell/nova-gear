@@ -30,6 +30,9 @@ const LabaRugi = {
 
     try {
       const db = App.db();
+      const settings  = await App.getSettings();
+      const modalAwal = parseFloat(settings.modal_awal || 0);
+
       let ordersQ = db.from('orders').select('status,gross_revenue,net_revenue,shopee_commission,shopee_service_fee,shopee_ads_fee,shopee_other_fee,qty,sku');
       let hppQ    = db.from('hpp').select('total_cost,purchase_date');
       let adsQ    = db.from('ads').select('cost,ad_date');
@@ -73,8 +76,11 @@ const LabaRugi = {
       const totalOps   = sum(ops, 'cost');
       const totalBeban = totalAds + totalOps;
 
-      const labaBersih = labaKotor - totalBeban;
-      const marginPct  = omzet > 0 ? (labaBersih / omzet * 100) : 0;
+      const labaBersih      = labaKotor - totalBeban;
+      const marginPct       = omzet > 0 ? (labaBersih / omzet * 100) : 0;
+      const totalPemasukan  = netRev;
+      const totalPengeluaran = totalHPP + totalAds + totalOps;
+      const sisaKas         = modalAwal + totalPemasukan - totalPengeluaran;
 
       const label = from && to ? `${App.formatDate(from)} – ${App.formatDate(to)}` : 'Semua Waktu';
 
@@ -121,6 +127,29 @@ const LabaRugi = {
               <span class="font-black text-xl text-money ${labaBersih >= 0 ? 'text-green-700' : 'text-red-700'}">${App.formatRupiah(labaBersih)}</span>
             </div>
             <p class="text-xs ${labaBersih >= 0 ? 'text-green-600' : 'text-red-500'} mt-1">Margin: ${marginPct.toFixed(2)}% dari omzet</p>
+          </div>
+
+          <!-- POSISI KAS -->
+          <div class="px-5 py-4 bg-sky-50 border-t-2 border-sky-200">
+            <p class="text-xs font-black text-sky-500 uppercase tracking-widest mb-3">POSISI KAS</p>
+            <div class="space-y-1.5 text-sm">
+              <div class="flex justify-between items-center">
+                <span class="text-sky-700">Modal Awal</span>
+                <span class="font-semibold text-money text-sky-800">${App.formatRupiah(modalAwal)}</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-sky-700">+ Total Pemasukan (Net Diterima)</span>
+                <span class="font-semibold text-money text-sky-800">${App.formatRupiah(totalPemasukan)}</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-sky-700">− Total Pengeluaran (HPP + Iklan + Ops)</span>
+                <span class="font-semibold text-money text-red-600">${App.formatRupiah(totalPengeluaran)}</span>
+              </div>
+            </div>
+            <div class="flex justify-between items-center mt-3 pt-3 border-t border-sky-200">
+              <span class="font-black text-base text-sky-800">SISA KAS</span>
+              <span class="font-black text-xl text-money ${sisaKas >= 0 ? 'text-sky-700' : 'text-red-700'}">${App.formatRupiah(sisaKas)}</span>
+            </div>
           </div>
         </div>
 

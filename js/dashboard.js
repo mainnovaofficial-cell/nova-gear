@@ -34,6 +34,9 @@ const Dashboard = {
     ]);
     if (e1 || e2 || e3 || e4 || e5) throw new Error((e1||e2||e3||e4||e5).message);
 
+    const settings  = await App.getSettings();
+    const modalAwal = parseFloat(settings.modal_awal || 0);
+
     const all       = orders || [];
     const selesai   = all.filter(o => o.status === 'Selesai');
     const batal     = all.filter(o => o.status === 'Dibatalkan');
@@ -49,6 +52,7 @@ const Dashboard = {
     const totalOp   = sum(opData   || [], 'cost');
     const totalExp  = totalHPP + totalAds + totalOp;
     const labaB     = netRev - totalExp;
+    const sisaKas   = modalAwal + netRev - totalExp;
 
     const scans     = (scanToday || []).filter(s => !s.is_cancelled);
     const returnRate = selesai.length > 0 ? (retur.length / selesai.length * 100).toFixed(1) : '0.0';
@@ -84,11 +88,12 @@ const Dashboard = {
       </div>
 
       <!-- Row 1: Financial -->
-      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+      <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-5">
         ${this._bigCard('Omzet', App.formatRupiah(omzet), 'Total penjualan kotor', 'bg-emerald-50','text-emerald-600','M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 6v1m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z')}
         ${this._bigCard('Net Diterima', App.formatRupiah(netRev), `Pot. Shopee ${App.formatRupiah(potShopee)}`, 'bg-blue-50','text-blue-600','M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z')}
         ${this._bigCard('Total Pengeluaran', App.formatRupiah(totalExp), 'HPP + Iklan + Operasional', 'bg-amber-50','text-amber-600','M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z')}
         ${this._bigCard('Laba Bersih', App.formatRupiah(labaB), 'Net − HPP − Iklan − Ops', labaB>=0?'bg-green-50':'bg-red-50', labaB>=0?'text-green-600':'text-red-600','M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z')}
+        ${this._bigCard('Sisa Kas', App.formatRupiah(sisaKas), 'Modal + Net − Pengeluaran', sisaKas>=0?'bg-sky-50':'bg-red-50', sisaKas>=0?'text-sky-600':'text-red-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
       </div>
 
       <!-- Row 2: Order Status -->
