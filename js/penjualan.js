@@ -303,18 +303,20 @@ const Penjualan = {
     prevD.setDate(prevD.getDate() - 1);
     const prev = prevD.toISOString().slice(0, 10);
 
-    // Use all loaded orders (independent from global search/status filter)
-    const dayAll  = this._orders.filter(o => (o.order_date || '').slice(0, 10) === sel);
-    const prevAll = this._orders.filter(o => (o.order_date || '').slice(0, 10) === prev);
+    // Filter by created_at (import date), not order_date (Shopee order date)
+    const dayAll  = this._orders.filter(o => (o.created_at || '').slice(0, 10) === sel);
+    const prevAll = this._orders.filter(o => (o.created_at || '').slice(0, 10) === prev);
 
-    const uniqueNos  = new Set(dayAll.map(o  => o.order_no || o.id));
-    const prevNos    = new Set(prevAll.map(o => o.order_no || o.id));
-    const omzet      = dayAll.reduce((s, o)  => s + (+o.gross_revenue || 0), 0);
-    const prevOmzet  = prevAll.reduce((s, o) => s + (+o.gross_revenue || 0), 0);
-    const selesaiNos = new Set(dayAll.filter(o => o.status === 'Selesai').map(o => o.order_no || o.id));
+    // Total Pesanan = unique order_no
+    const uniqueNos = new Set(dayAll.map(o  => o.order_no || o.id));
+    const prevNos   = new Set(prevAll.map(o => o.order_no || o.id));
+
+    // Total Item = sum of qty
+    const totalQty = dayAll.reduce((s, o)  => s + (+o.qty || 1), 0);
+    const prevQty  = prevAll.reduce((s, o) => s + (+o.qty || 1), 0);
 
     const diffOrders = uniqueNos.size - prevNos.size;
-    const diffOmzet  = omzet - prevOmzet;
+    const diffQty    = totalQty - prevQty;
 
     const diffColor = n => n > 0 ? 'text-green-600' : n < 0 ? 'text-red-500' : 'text-gray-400';
     const arrow     = n => n > 0 ? '↑' : n < 0 ? '↓' : '→';
@@ -326,19 +328,18 @@ const Penjualan = {
     };
 
     const tableHtml = dayAll.length === 0
-      ? `<div class="empty-state card py-12 mt-4"><p>Tidak ada pesanan pada tanggal ini.</p></div>`
+      ? `<div class="empty-state card py-12 mt-4"><p>Tidak ada pesanan yang diimport pada tanggal ini.</p></div>`
       : `<div class="table-wrapper mt-4">
           <table class="data-table">
             <thead><tr>
               <th>No. Pesanan</th><th>Produk</th><th>SKU</th>
-              <th class="text-center">Qty</th><th>Omzet</th><th>Status</th>
+              <th class="text-center">Qty</th><th>Status</th>
             </tr></thead>
             <tbody>${dayAll.map(o => `<tr>
               <td class="font-mono text-xs text-gray-500">${o.order_no || 'manual'}</td>
               <td class="max-w-[200px] truncate text-sm" title="${o.product_name||''}">${o.product_name||'-'}</td>
               <td class="font-mono text-xs">${o.sku||'-'}</td>
-              <td class="text-center">${o.qty||1}</td>
-              <td class="text-money">${App.formatRupiah(o.gross_revenue)}</td>
+              <td class="text-center font-semibold">${o.qty||1}</td>
               <td>${statusBadge(o.status)}</td>
             </tr>`).join('')}
             </tbody>
@@ -348,37 +349,27 @@ const Penjualan = {
     return `
     <div class="card mt-4 !py-3">
       <div class="flex flex-wrap gap-3 items-center">
-        <label class="text-sm font-medium text-gray-600">Tanggal:</label>
+        <label class="text-sm font-medium text-gray-600">Tanggal Import:</label>
         <input type="date" value="${sel}" max="${today}" class="input w-40 !py-1.5 text-xs"
                onchange="Penjualan._setHarianDate(this.value)"/>
         ${sel !== today ? `<button onclick="Penjualan._setHarianDate('${today}')" class="btn-secondary text-xs !py-1.5">Hari Ini</button>` : ''}
       </div>
     </div>
 
-    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+    <div class="grid grid-cols-2 gap-3 mt-4" style="max-width:480px">
       <div class="stat-card">
         <p class="stat-label">Total Pesanan</p>
         <p class="text-2xl font-bold text-gray-800">${uniqueNos.size}</p>
-        ${prevNos.size > 0 || diffOrders !== 0
-          ? `<p class="text-xs mt-1 font-medium ${diffColor(diffOrders)}">${arrow(diffOrders)} ${sign(diffOrders)}${diffOrders} vs hari sebelumnya</p>`
-          : `<p class="stat-sub text-xs mt-1">Tidak ada data hari sebelumnya</p>`}
+        <p class="text-xs mt-1 font-medium ${diffColor(diffOrders)}">
+          ${arrow(diffOrders)} ${sign(diffOrders)}${diffOrders} vs hari sebelumnya
+        </p>
       </div>
       <div class="stat-card">
-        <p class="stat-label">Total Item</p>
-        <p class="text-2xl font-bold text-gray-800">${dayAll.length}</p>
-        <p class="stat-sub">&nbsp;</p>
-      </div>
-      <div class="stat-card">
-        <p class="stat-label">Selesai</p>
-        <p class="text-2xl font-bold text-green-600">${selesaiNos.size}</p>
-        <p class="stat-sub">&nbsp;</p>
-      </div>
-      <div class="stat-card">
-        <p class="stat-label">Total Omzet</p>
-        <p class="text-lg font-bold text-money truncate">${App.formatRupiah(omzet)}</p>
-        ${prevNos.size > 0 || diffOmzet !== 0
-          ? `<p class="text-xs mt-1 font-medium ${diffColor(diffOmzet)}">${arrow(diffOmzet)} ${sign(diffOmzet)}${App.formatRupiah(Math.abs(diffOmzet))} vs hari sebelumnya</p>`
-          : `<p class="stat-sub text-xs mt-1">Tidak ada data hari sebelumnya</p>`}
+        <p class="stat-label">Total Item (Qty)</p>
+        <p class="text-2xl font-bold text-gray-800">${totalQty}</p>
+        <p class="text-xs mt-1 font-medium ${diffColor(diffQty)}">
+          ${arrow(diffQty)} ${sign(diffQty)}${diffQty} vs hari sebelumnya
+        </p>
       </div>
     </div>
 
