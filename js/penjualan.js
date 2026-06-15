@@ -629,15 +629,24 @@ const Penjualan = {
 
       prog.textContent = 'Mengecek duplikat di database...';
       const orderNos = [...new Set(records.map(r => r.order_no).filter(Boolean))];
-      const { data: existing, error: fetchErr } = await App.db()
-        .from('orders')
-        .select('order_no, sku')
-        .in('order_no', orderNos);
-      if (fetchErr) throw fetchErr;
 
-      const existingSet = new Set((existing || []).map(r => `${r.order_no}||${r.sku||''}`));
-      const newRecords  = records.filter(r => !existingSet.has(`${r.order_no}||${r.sku||''}`));
-      const skipped     = records.length - newRecords.length;
+      // Guard: .in() dengan array kosong menyebabkan "Bad Request" di supabase-js
+      let existingSet = new Set();
+      if (orderNos.length > 0) {
+        const { data: existing, error: fetchErr } = await App.db()
+          .from('orders')
+          .select('order_no, sku')
+          .in('order_no', orderNos);
+        if (fetchErr) {
+          throw new Error(`Gagal cek duplikat: ${fetchErr.message}` +
+            (fetchErr.details ? ` — ${fetchErr.details}` : '') +
+            (fetchErr.hint   ? ` (hint: ${fetchErr.hint})` : ''));
+        }
+        existingSet = new Set((existing || []).map(r => `${r.order_no}||${r.sku||''}`));
+      }
+
+      const newRecords = records.filter(r => !existingSet.has(`${r.order_no}||${r.sku||''}`));
+      const skipped    = records.length - newRecords.length;
 
       if (!newRecords.length) {
         res.innerHTML = `<p class="text-orange-700">Semua <strong>${records.length}</strong> pesanan sudah ada di database.</p>`;
@@ -648,8 +657,33 @@ const Penjualan = {
       }
 
       prog.textContent = `Menyimpan ${newRecords.length} pesanan...`;
-      const { error } = await App.db().from('orders').insert(newRecords);
-      if (error) throw error;
+      let { error } = await App.db().from('orders').insert(newRecords);
+
+      // Fallback: jika kolom cancel_reason / stok_action belum ada (migrasi v3 belum dijalankan),
+      // Supabase mengembalikan "Bad Request" (HTTP 400). Coba insert tanpa kolom baru.
+      let migrationWarning = false;
+      if (error && (
+        error.message === 'Bad Request' ||
+        (error.message || '').includes('stok_action') ||
+        (error.message || '').includes('cancel_reason') ||
+        (error.details || '').includes('stok_action') ||
+        (error.details || '').includes('cancel_reason')
+      )) {
+        prog.textContent = 'Kolom baru belum ada, mencoba insert tanpa stok_action...';
+        const stripped = newRecords.map(({ cancel_reason, stok_action, ...r }) => r);
+        const fallback = await App.db().from('orders').insert(stripped);
+        error = fallback.error;
+        migrationWarning = true;
+      }
+
+      if (error) {
+        throw new Error(
+          `${error.message || 'Unknown error'}` +
+          (error.details ? `\nDetail: ${error.details}` : '') +
+          (error.hint    ? `\nHint: ${error.hint}` : '') +
+          (error.code    ? ` (kode: ${error.code})` : '')
+        );
+      }
 
       // Count by stok_action
       const countAction = action => newRecords.filter(r => r.stok_action === action).length;
@@ -664,13 +698,18 @@ const Penjualan = {
         <div class="space-y-1">
           <p class="font-semibold text-green-700">Import berhasil!</p>
           <p>Pesanan baru: <strong>${newRecords.length}</strong>${skipped ? ` (dilewati duplikat: ${skipped})` : ''}</p>
+          ${migrationWarning ? `
+          <div class="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
+            <strong>Migrasi v3 belum dijalankan</strong> — pencatatan stok_action tidak aktif.
+            Jalankan SQL migrasi v3 di Supabase untuk mengaktifkan fitur stok otomatis.
+          </div>` : `
           <div class="mt-2 text-xs space-y-0.5 border-t border-gray-100 pt-2">
             ${nKeluar  ? `<p>Stok Keluar: <strong>${nKeluar}</strong></p>` : ''}
             ${nTetap   ? `<p>Stok Tetap: <strong>${nTetap}</strong></p>` : ''}
             ${nHilang  ? `<p class="text-orange-600">Paket Hilang (perlu catat kompensasi): <strong>${nHilang}</strong></p>` : ''}
             ${nGagal   ? `<p class="text-yellow-700">Tunggu Barang Kembali: <strong>${nGagal}</strong></p>` : ''}
             ${nReview  ? `<p class="text-blue-700 font-semibold">Perlu Review: <strong>${nReview}</strong> — cek tab "Perlu Direview"!</p>` : ''}
-          </div>
+          </div>`}
           <p class="text-xs text-gray-500 pt-1">Total Omzet: ${App.formatRupiah(totalOmzet)}</p>
         </div>`;
       res.className = 'mt-3 p-3 rounded-lg bg-green-50 border border-green-100 text-sm';
@@ -687,7 +726,16 @@ const Penjualan = {
 
     } catch (err) {
       prog.classList.add('hidden');
-      res.innerHTML = `<p class="text-red-600">Error: ${err.message}</p>`;
+      res.innerHTML = `
+        <div class="space-y-1">
+          <p class="font-semibold text-red-600">Import gagal</p>
+          <p class="text-red-700 text-xs whitespace-pre-wrap">${err.message}</p>
+          ${err.message === 'Bad Request' || (err.message || '').includes('stok_action') ? `
+          <p class="text-xs text-orange-700 mt-2 p-2 bg-orange-50 border border-orange-200 rounded">
+            Kemungkinan penyebab: kolom <strong>cancel_reason</strong> dan <strong>stok_action</strong>
+            belum ada di database. Jalankan <strong>SQL Migrasi v3</strong> di Supabase SQL Editor terlebih dahulu.
+          </p>` : ''}
+        </div>`;
       res.className = 'mt-3 p-3 rounded-lg bg-red-50 border border-red-100 text-sm';
       res.classList.remove('hidden');
     }
