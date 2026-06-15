@@ -40,7 +40,7 @@ const Dashboard = {
     const today     = App.todayISO();
     const all       = orders || [];
     const selesai   = all.filter(o => o.status === 'Selesai');
-    const batal     = all.filter(o => o.status === 'Dibatalkan');
+    const batal     = all.filter(o => o.status === 'Batal');
     const gagal     = all.filter(o => o.status === 'Gagal');
     const retur     = all.filter(o => o.status === 'Dikembalikan');
     const diproses  = all.filter(o => o.status === 'Diproses');
