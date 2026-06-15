@@ -1,6 +1,8 @@
 /* ═══════════════════════════════════════════════════════
    Nova Gear — Penjualan Module
    3 import terpisah: Pesanan / Retur-Batal / Income
+   + Manajemen stok: stok_action per pesanan
+   + Section "Perlu Direview" untuk Owner
 ═══════════════════════════════════════════════════════ */
 'use strict';
 
@@ -11,10 +13,11 @@ const Penjualan = {
 
   async onLoad() {
     const el = document.getElementById('page-penjualan');
-    el.innerHTML = this._shell();
+    el.innerHTML = `<div class="p-8 text-center text-gray-400 text-sm">Memuat data pesanan...</div>`;
     await this._loadOrders();
+    el.innerHTML = this._shell();
     this._renderTab();
-    this._bindFilter();
+    this._updateReviewBadge();
   },
 
   _shell() {
@@ -52,10 +55,15 @@ const Penjualan = {
     <!-- Filters -->
     <div class="card mb-4 !py-3">
       <div class="flex flex-wrap gap-2 items-center">
-        <input id="pj-search" type="text" placeholder="Cari no. pesanan / produk..." class="input w-52 !py-1.5 text-xs" oninput="Penjualan._onFilter()"/>
-        <select id="pj-status" class="input w-40 !py-1.5 text-xs" onchange="Penjualan._onFilter()">
+        <input id="pj-search" type="text" placeholder="Cari no. pesanan / produk / SKU..." class="input w-56 !py-1.5 text-xs" oninput="Penjualan._onFilter()"/>
+        <select id="pj-status" class="input w-44 !py-1.5 text-xs" onchange="Penjualan._onFilter()">
           <option value="">Semua Status</option>
-          <option>Selesai</option><option>Dibatalkan</option><option>Gagal</option><option>Dikembalikan</option>
+          <option>Selesai</option>
+          <option>Perlu Dikirim</option>
+          <option>Sedang Dikirim</option>
+          <option>Dibatalkan</option>
+          <option>Dikembalikan</option>
+          <option>Gagal</option>
         </select>
         <input id="pj-from" type="date" class="input w-36 !py-1.5 text-xs" onchange="Penjualan._onFilter()"/>
         <input id="pj-to"   type="date" class="input w-36 !py-1.5 text-xs" onchange="Penjualan._onFilter()"/>
@@ -69,6 +77,10 @@ const Penjualan = {
       <button class="tab-btn active" onclick="Penjualan._switchTab('semua', this)">Semua Pesanan</button>
       <button class="tab-btn"        onclick="Penjualan._switchTab('status', this)">Rekap Status</button>
       <button class="tab-btn"        onclick="Penjualan._switchTab('harian', this)">Rekap Harian</button>
+      <button class="tab-btn"        onclick="Penjualan._switchTab('review', this)">
+        Perlu Direview
+        <span id="pj-review-badge" class="hidden ml-1.5 bg-red-500 text-white text-xs rounded-full px-1.5 py-0.5 leading-none font-bold">0</span>
+      </button>
     </div>
 
     <div id="pj-tab-content"></div>`;
@@ -80,13 +92,25 @@ const Penjualan = {
     this._orders = data || [];
   },
 
+  _updateReviewBadge() {
+    const badge = document.getElementById('pj-review-badge');
+    if (!badge) return;
+    const count = this._orders.filter(o =>
+      ['menunggu_barang_kembali', 'perlu_review', 'sudah_keluar_tidak_balik'].includes(o.stok_action)
+    ).length;
+    badge.textContent = count;
+    badge.classList.toggle('hidden', count === 0);
+  },
+
   _filtered() {
     const f = this._filter;
     return this._orders.filter(o => {
       if (f.status && o.status !== f.status) return false;
       if (f.q) {
         const q = f.q.toLowerCase();
-        if (!(o.order_no||'').toLowerCase().includes(q) && !(o.product_name||'').toLowerCase().includes(q) && !(o.sku||'').toLowerCase().includes(q)) return false;
+        if (!(o.order_no||'').toLowerCase().includes(q) &&
+            !(o.product_name||'').toLowerCase().includes(q) &&
+            !(o.sku||'').toLowerCase().includes(q)) return false;
       }
       if (f.dateFrom && (o.order_date||'') < f.dateFrom) return false;
       if (f.dateTo   && (o.order_date||'') > f.dateTo)   return false;
@@ -106,19 +130,67 @@ const Penjualan = {
     const uniqueOrders = new Set(data.map(o => o.order_no).filter(Boolean)).size;
     const manualCount  = data.filter(o => !o.order_no).length;
     const totalPesanan = uniqueOrders + manualCount;
-    document.getElementById('pj-count').textContent =
-      `${totalPesanan} pesanan · ${data.length} item`;
+    document.getElementById('pj-count').textContent = `${totalPesanan} pesanan · ${data.length} item`;
     const el = document.getElementById('pj-tab-content');
     if (this._tab === 'semua')   el.innerHTML = this._tableSemua(data);
     if (this._tab === 'status')  el.innerHTML = this._tableStatus(data);
     if (this._tab === 'harian')  el.innerHTML = this._tableHarian(data);
+    if (this._tab === 'review')  el.innerHTML = this._tableReview();
   },
 
+  /* ── STOK ACTION HELPERS ── */
+  _determineStokAction(status, cancelReason) {
+    const s = (status || '').trim();
+    const sLow = s.toLowerCase();
+    const r = (cancelReason || '').toLowerCase().trim();
+
+    // Statuses that deduct stock
+    if (['selesai', 'completed'].some(x => sLow === x)) return 'keluar';
+    if (['perlu dikirim', 'to ship', 'to_ship'].some(x => sLow.includes(x))) return 'keluar';
+    if (['sedang dikirim', 'shipped', 'in delivery', 'dikirim'].some(x => sLow.includes(x))) return 'keluar';
+    if (sLow.includes('pesanan diterima') || sLow.includes('order received')) return 'keluar';
+
+    // Cancelled / Batal — check reason
+    if (sLow.includes('batal') || sLow.includes('cancel')) {
+      if (!r) return 'tidak_berubah';
+      if (r.includes('pembeli') || r.includes('buyer')) return 'tidak_berubah';
+      if (r.includes('produk habis') || r.includes('out of stock') || r.includes('stok habis')) return 'tidak_berubah';
+      if (r.includes('belum dibayar') || r.includes('unpaid') || r.includes('not paid') || r.includes('pembayaran')) return 'tidak_berubah';
+      if ((r.includes('lainnya') || r.includes('others') || r.includes('other')) &&
+          !r.includes('paket') && !r.includes('pengiriman')) return 'tidak_berubah';
+      if (r.includes('paket hilang') || r.includes('lost parcel') || r.includes('package lost') || r.includes('hilang')) return 'sudah_keluar_tidak_balik';
+      if (r.includes('pengiriman gagal') || r.includes('gagal kirim') || r.includes('delivery failed') || r.includes('failed delivery')) return 'menunggu_barang_kembali';
+      return 'perlu_review';
+    }
+
+    // Dikembalikan / returned
+    if (sLow.includes('dikembalikan') || sLow.includes('return')) return 'menunggu_barang_kembali';
+
+    return 'tidak_berubah';
+  },
+
+  _stokActionBadge(action) {
+    const map = {
+      keluar:                   ['badge-red',    'Stok Keluar'],
+      tidak_berubah:            ['badge-gray',   'Stok Tetap'],
+      sudah_keluar_tidak_balik: ['badge-orange', 'Paket Hilang'],
+      menunggu_barang_kembali:  ['badge-yellow', 'Tunggu Retur'],
+      barang_kembali:           ['badge-green',  'Barang Kembali'],
+      perlu_review:             ['badge-blue',   'Perlu Review'],
+      kompensasi_selesai:       ['badge-green',  'Kompensasi OK'],
+    };
+    if (!action) return '';
+    const [cls, lbl] = map[action] || ['badge-gray', action];
+    return `<span class="badge ${cls} text-xs">${lbl}</span>`;
+  },
+
+  /* ── TAB: SEMUA PESANAN ── */
   _tableSemua(data) {
     if (!data.length) return `<div class="empty-state"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg><p>Tidak ada pesanan</p></div>`;
 
     const statusBadge = s => {
-      const m = { Selesai:'badge-green', Dibatalkan:'badge-gray', Gagal:'badge-red', Dikembalikan:'badge-orange' };
+      const m = { Selesai:'badge-green', Dibatalkan:'badge-gray', Gagal:'badge-red', Dikembalikan:'badge-orange',
+                  'Perlu Dikirim':'badge-blue', 'Sedang Dikirim':'badge-blue' };
       return `<span class="badge ${m[s]||'badge-gray'}">${s||'-'}</span>`;
     };
     const deleteBtn = id => `
@@ -126,7 +198,6 @@ const Penjualan = {
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
       </button>`;
 
-    // Group rows by order_no, preserving sort order
     const groups = [];
     const groupMap = {};
     for (const o of data) {
@@ -160,6 +231,7 @@ const Penjualan = {
           <td class="text-money">${isFirst ? App.formatRupiah(o.net_revenue) : ''}</td>
           <td>${isFirst ? (o.expedition||'-') : ''}</td>
           <td>${isFirst ? statusBadge(o.status) : ''}</td>
+          <td>${isFirst ? this._stokActionBadge(o.stok_action) : ''}</td>
           <td>${isFirst ? `<span class="badge ${o.source==='offline'?'badge-orange':'badge-blue'}">${o.source||'shopee'}</span>` : ''}</td>
           <td>${deleteBtn(o.id)}</td>
         </tr>`;
@@ -171,16 +243,17 @@ const Penjualan = {
       <table class="data-table">
         <thead><tr>
           <th>No. Pesanan</th><th>Tanggal</th><th>Produk</th><th>SKU</th><th>Qty</th>
-          <th>Harga Jual</th><th>Subtotal</th><th>Net</th><th>Ekspedisi</th><th>Status</th><th>Sumber</th><th></th>
+          <th>Harga Jual</th><th>Subtotal</th><th>Net</th><th>Ekspedisi</th>
+          <th>Status</th><th>Stok</th><th>Sumber</th><th></th>
         </tr></thead>
         <tbody>${rows.join('')}</tbody>
       </table>
     </div>`;
   },
 
+  /* ── TAB: REKAP STATUS ── */
   _tableStatus(data) {
     const map = {};
-    // Track net per unique order_no to avoid double-counting multi-item orders
     const netByOrder = {};
     data.forEach(o => {
       const s   = o.status || 'Tidak Diketahui';
@@ -195,7 +268,8 @@ const Penjualan = {
     });
     const rows = Object.entries(map);
     if (!rows.length) return `<div class="empty-state"><p>Tidak ada data</p></div>`;
-    const badgeMap = { Selesai:'badge-green', Dibatalkan:'badge-gray', Gagal:'badge-red', Dikembalikan:'badge-orange' };
+    const badgeMap = { Selesai:'badge-green', Dibatalkan:'badge-gray', Gagal:'badge-red', Dikembalikan:'badge-orange',
+                       'Perlu Dikirim':'badge-blue', 'Sedang Dikirim':'badge-blue' };
     const totalOrders = new Set(data.map(o => o.order_no || o.id)).size;
     const totalOmzet  = data.reduce((s, o) => s + (+o.gross_revenue||0), 0);
     const totalNet    = Object.values(netByOrder).reduce((s, v) => s + v, 0);
@@ -221,6 +295,7 @@ const Penjualan = {
     </div>`;
   },
 
+  /* ── TAB: REKAP HARIAN ── */
   _tableHarian(data) {
     const map = {};
     const netByOrder = {};
@@ -254,6 +329,164 @@ const Penjualan = {
     </div>`;
   },
 
+  /* ── TAB: PERLU DIREVIEW ── */
+  _tableReview() {
+    const REVIEW_ACTIONS = ['menunggu_barang_kembali', 'perlu_review', 'sudah_keluar_tidak_balik'];
+    const items = this._orders.filter(o => REVIEW_ACTIONS.includes(o.stok_action));
+
+    if (!items.length) return `
+      <div class="empty-state card py-16">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" class="w-12 h-12 text-gray-300 mx-auto mb-3">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <p class="text-gray-500">Tidak ada pesanan yang perlu direview.</p>
+      </div>`;
+
+    const menunggu   = items.filter(o => o.stok_action === 'menunggu_barang_kembali');
+    const perlu      = items.filter(o => o.stok_action === 'perlu_review');
+    const hilang     = items.filter(o => o.stok_action === 'sudah_keluar_tidak_balik');
+
+    const section = (title, color, desc, rows) => !rows.length ? '' : `
+      <div class="card mb-4">
+        <div class="flex items-start gap-3 mb-3">
+          <div class="w-2 h-2 rounded-full bg-${color}-400 mt-2 flex-shrink-0"></div>
+          <div>
+            <h3 class="font-semibold text-gray-800">${title} <span class="badge badge-gray ml-1">${rows.length}</span></h3>
+            <p class="text-xs text-gray-500 mt-0.5">${desc}</p>
+          </div>
+        </div>
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead><tr>
+              <th>No. Pesanan</th><th>Tanggal</th><th>Produk</th><th>SKU</th><th class="text-center">Qty</th>
+              <th>Alasan</th>${App.isOwner() ? '<th>Aksi</th>' : ''}
+            </tr></thead>
+            <tbody>${rows.map(o => `<tr>
+              <td class="font-mono text-xs text-gray-500">${o.order_no||'manual'}</td>
+              <td class="whitespace-nowrap text-sm">${App.formatDate(o.order_date)}</td>
+              <td class="max-w-[160px] truncate text-sm" title="${o.product_name||''}">${o.product_name||'-'}</td>
+              <td class="font-mono text-xs">${o.sku||'-'}</td>
+              <td class="text-center font-semibold">${o.qty||1}</td>
+              <td class="text-xs text-gray-500 max-w-[200px] truncate" title="${o.cancel_reason||''}">${o.cancel_reason||'-'}</td>
+              ${App.isOwner() ? `<td>${this._reviewActions(o)}</td>` : ''}
+            </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+
+    return `
+    <div class="mt-2">
+      ${section(
+        'Menunggu Barang Kembali', 'yellow',
+        'Pengiriman gagal — konfirmasi apakah barang sudah kembali ke gudang.',
+        menunggu
+      )}
+      ${section(
+        'Perlu Review', 'blue',
+        'Alasan pembatalan tidak dikenali — Owner perlu menentukan dampak stok.',
+        perlu
+      )}
+      ${section(
+        'Paket Hilang — Perlu Catat Kompensasi', 'orange',
+        'Stok sudah keluar dan tidak kembali. Catat sebagai Pemasukan Kompensasi.',
+        hilang
+      )}
+    </div>`;
+  },
+
+  _reviewActions(o) {
+    if (o.stok_action === 'menunggu_barang_kembali') {
+      return `
+        <div class="flex gap-1">
+          <button onclick="Penjualan.confirmReview('${o.id}','barang_kembali')"
+                  class="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors font-medium whitespace-nowrap">
+            Barang Kembali
+          </button>
+          <button onclick="Penjualan.confirmReview('${o.id}','tidak_kembali')"
+                  class="text-xs px-2 py-1 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors font-medium whitespace-nowrap">
+            Tidak Kembali
+          </button>
+        </div>`;
+    }
+    if (o.stok_action === 'perlu_review') {
+      return `
+        <div class="flex gap-1">
+          <button onclick="Penjualan.confirmReview('${o.id}','stok_keluar')"
+                  class="text-xs px-2 py-1 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors font-medium whitespace-nowrap">
+            Stok Keluar
+          </button>
+          <button onclick="Penjualan.confirmReview('${o.id}','stok_tetap')"
+                  class="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium whitespace-nowrap">
+            Stok Tetap
+          </button>
+        </div>`;
+    }
+    if (o.stok_action === 'sudah_keluar_tidak_balik') {
+      return `
+        <button onclick="Penjualan.confirmReview('${o.id}','kompensasi_selesai')"
+                class="text-xs px-2 py-1 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors font-medium whitespace-nowrap">
+          Catat Kompensasi
+        </button>`;
+    }
+    return '';
+  },
+
+  async confirmReview(id, action) {
+    if (!App.isOwner()) { App.toast('Hanya Owner yang dapat konfirmasi.', 'warning'); return; }
+
+    const order = this._orders.find(o => o.id === id);
+    if (!order) return;
+
+    const confirmMap = {
+      barang_kembali:      `Konfirmasi barang SKU ${order.sku} (${order.qty} unit) sudah kembali ke gudang? Stok akan dikembalikan.`,
+      tidak_kembali:       `Konfirmasi barang SKU ${order.sku} TIDAK kembali? Stok tetap keluar.`,
+      stok_keluar:         `Set stok SKU ${order.sku} (${order.qty} unit) sebagai KELUAR?`,
+      stok_tetap:          `Set stok SKU ${order.sku} TIDAK BERUBAH (stok tidak dikurangi)?`,
+      kompensasi_selesai:  `Tandai pesanan ${order.order_no||'manual'} sebagai sudah dicatat kompensasi di laporan keuangan?`,
+    };
+
+    const ok = await App.confirm(confirmMap[action] || 'Konfirmasi aksi ini?');
+    if (!ok) return;
+
+    const newActionMap = {
+      barang_kembali:     'barang_kembali',
+      tidak_kembali:      'sudah_keluar_tidak_balik',
+      stok_keluar:        'keluar',
+      stok_tetap:         'tidak_berubah',
+      kompensasi_selesai: 'kompensasi_selesai',
+    };
+
+    const newAction = newActionMap[action];
+    if (!newAction) return;
+
+    const updatePayload = { stok_action: newAction };
+    if (action === 'kompensasi_selesai') {
+      updatePayload.notes = (order.notes ? order.notes + ' | ' : '') +
+        `Kompensasi dicatat pada ${App.todayISO()} oleh Owner`;
+    }
+
+    const { error } = await App.db().from('orders').update(updatePayload).eq('id', id);
+    if (error) { App.toast('Gagal menyimpan: ' + error.message, 'error'); return; }
+
+    const msgMap = {
+      barang_kembali:     'Barang dikonfirmasi kembali. Stok dipulihkan.',
+      tidak_kembali:      'Dikonfirmasi: barang tidak kembali. Stok tetap keluar.',
+      stok_keluar:        'Stok dikurangi untuk pesanan ini.',
+      stok_tetap:         'Stok tidak berubah untuk pesanan ini.',
+      kompensasi_selesai: 'Kompensasi berhasil dicatat.',
+    };
+    App.toast(msgMap[action] || 'Berhasil disimpan.', 'success');
+
+    // Update local state
+    const idx = this._orders.findIndex(o => o.id === id);
+    if (idx !== -1) this._orders[idx].stok_action = newAction;
+
+    this._updateReviewBadge();
+    this._renderTab();
+  },
+
+  /* ── FILTER ── */
   _onFilter() {
     this._filter.q        = document.getElementById('pj-search')?.value || '';
     this._filter.status   = document.getElementById('pj-status')?.value || '';
@@ -273,9 +506,7 @@ const Penjualan = {
 
   _bindFilter() {},
 
-  /* ─────────────────────────────────────────
-     SHARED HELPERS
-  ───────────────────────────────────────── */
+  /* ── SHARED HELPERS ── */
   _col(row, ...keys) {
     for (const k of keys) {
       if (row[k] !== undefined && row[k] !== '') return row[k];
@@ -286,8 +517,6 @@ const Penjualan = {
   _toNum(v) {
     const s = String(v).trim();
     if (!s) return 0;
-    // Format Indonesia (Shopee): titik = pemisah ribuan, koma = desimal
-    // "19.837.500" → 19837500 | "1.500,50" → 1500.50
     return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
   },
 
@@ -301,34 +530,23 @@ const Penjualan = {
     return null;
   },
 
-  _importDropZone(inputId, accept, label, colorClass) {
-    return `
-    <div class="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer
-                hover:border-${colorClass}-300 hover:bg-${colorClass}-50/30 transition-colors"
-         onclick="document.getElementById('${inputId}').click()">
-      <svg class="w-10 h-10 text-gray-300 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-          d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-      </svg>
-      <p class="text-sm text-gray-500">${label}</p>
-    </div>`;
-  },
-
-  /* ─────────────────────────────────────────
-     1. IMPORT PESANAN (xlsx — status Selesai)
-  ───────────────────────────────────────── */
+  /* ═══════════════════════════════════════════════
+     1. IMPORT PESANAN (xlsx — semua status)
+  ═══════════════════════════════════════════════ */
   openImportPesanan() {
     App.openModal({
       title: 'Import File Pesanan Shopee',
       size: 'max-w-xl',
       body: `
         <p class="text-sm text-gray-600 mb-3">Upload file <strong>.xlsx</strong> pesanan dari Shopee Seller Center.
-        Hanya baris berstatus <strong>Selesai</strong> yang diimport. Duplikat (No. Pesanan sama) dilewati.</p>
-        <div class="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700 mb-4">
-          <p class="font-semibold mb-1">Kolom yang dipetakan:</p>
-          <p>No. Pesanan · Status Pesanan · Nomor Referensi SKU · Nama Produk · Nama Variasi</p>
-          <p>Harga Setelah Diskon · Jumlah · Subtotal Pesanan · Voucher Ditanggung Penjual</p>
-          <p>Total Pembayaran · Waktu Pesanan Dibuat · Opsi Pengiriman</p>
+        Semua status pesanan diimport (kecuali Menunggu Pembayaran). Stok dihitung otomatis berdasarkan status &amp; alasan pembatalan.</p>
+        <div class="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700 mb-3 space-y-1">
+          <p class="font-semibold">Logika stok otomatis:</p>
+          <p>• <strong>Stok Keluar:</strong> Selesai, Perlu Dikirim, Sedang Dikirim, Pesanan Diterima</p>
+          <p>• <strong>Stok Tetap:</strong> Batal oleh Pembeli/Penjual (habis stok), Belum Dibayar, Lainnya</p>
+          <p>• <strong>Paket Hilang:</strong> Stok keluar tidak kembali → perlu catat kompensasi</p>
+          <p>• <strong>Gagal Kirim:</strong> Stok keluar → tunggu konfirmasi barang kembali</p>
+          <p>• <strong>Alasan tidak dikenali:</strong> Ditandai "Perlu Review"</p>
         </div>
         <div class="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer
                     hover:border-blue-300 hover:bg-blue-50/30 transition-colors"
@@ -362,43 +580,53 @@ const Penjualan = {
 
       if (!rows.length) throw new Error('File kosong atau tidak dapat dibaca.');
 
-      prog.textContent = `Memfilter baris Selesai dari ${rows.length} baris...`;
-
       const col    = this._col.bind(this);
       const toNum  = this._toNum.bind(this);
       const toDate = this._toDate.bind(this);
 
+      // Skip statuses that are not yet processed (payment pending)
+      const SKIP = ['menunggu pembayaran', 'unpaid', 'waiting for payment', 'pending payment'];
+
+      prog.textContent = `Memproses ${rows.length} baris...`;
+
       const records = rows
-        .filter(r => {
-          const s = col(r, 'Status Pesanan', 'Status', 'Order Status');
-          return s === 'Selesai' || s === 'Completed';
+        .map(r => {
+          const statusRaw    = col(r, 'Status Pesanan', 'Status', 'Order Status');
+          const cancelReason = col(r, 'Alasan Pembatalan', 'Alasan Pembatalan Pesanan', 'Cancel Reason', 'Cancellation Reason');
+          return {
+            order_no:         col(r, 'No. Pesanan', 'No Pesanan', 'Order ID'),
+            sku:              col(r, 'Nomor Referensi SKU', 'No. SKU Produk', 'SKU'),
+            product_name:     col(r, 'Nama Produk', 'Product Name'),
+            variation:        col(r, 'Nama Variasi', 'Variasi'),
+            selling_price:    toNum(col(r, 'Harga Setelah Diskon', 'Harga Jual', 'Unit Price')),
+            qty:              toNum(col(r, 'Jumlah', 'Qty', 'Quantity')) || 1,
+            gross_revenue:    toNum(col(r, 'Subtotal Pesanan', 'Total Harga Setelah Diskon', 'Subtotal')),
+            shopee_other_fee: toNum(col(r, 'Voucher Ditanggung Penjual', 'Voucher Seller')),
+            net_revenue:      toNum(col(r, 'Total Pembayaran', 'Total Penghasilan', 'Net Revenue')),
+            order_date:       toDate(col(r, 'Waktu Pesanan Dibuat', 'Tanggal Pesanan', 'Order Date')),
+            expedition:       col(r, 'Opsi Pengiriman', 'Ekspedisi', 'Kurir', 'Shipping'),
+            status:           statusRaw,
+            cancel_reason:    cancelReason || null,
+            source:           'shopee',
+            stok_action:      this._determineStokAction(statusRaw, cancelReason),
+            _statusLow:       statusRaw.toLowerCase(),
+          };
         })
-        .map(r => ({
-          order_no:         col(r, 'No. Pesanan', 'No Pesanan', 'Order ID'),
-          sku:              col(r, 'Nomor Referensi SKU', 'No. SKU Produk', 'SKU'),
-          product_name:     col(r, 'Nama Produk', 'Product Name'),
-          variation:        col(r, 'Nama Variasi', 'Variasi'),
-          selling_price:    toNum(col(r, 'Harga Setelah Diskon', 'Harga Jual', 'Unit Price')),
-          qty:              toNum(col(r, 'Jumlah', 'Qty', 'Quantity')) || 1,
-          gross_revenue:    toNum(col(r, 'Subtotal Pesanan', 'Total Harga Setelah Diskon', 'Subtotal')),
-          shopee_other_fee: toNum(col(r, 'Voucher Ditanggung Penjual', 'Voucher Seller')),
-          net_revenue:      toNum(col(r, 'Total Pembayaran', 'Total Penghasilan', 'Net Revenue')),
-          order_date:       toDate(col(r, 'Waktu Pesanan Dibuat', 'Tanggal Pesanan', 'Order Date')),
-          expedition:       col(r, 'Opsi Pengiriman', 'Ekspedisi', 'Kurir', 'Shipping'),
-          status:           'Selesai',
-          source:           'shopee',
-        }))
-        .filter(r => r.order_no);
+        .filter(r => {
+          if (!r.order_no) return false;
+          if (SKIP.some(s => r._statusLow.includes(s))) return false;
+          return true;
+        })
+        .map(({ _statusLow, ...r }) => r);
 
       if (!records.length) {
-        res.innerHTML = `<p class="text-orange-700">Tidak ada pesanan berstatus <strong>Selesai</strong> di file ini.</p>`;
+        res.innerHTML = `<p class="text-orange-700">Tidak ada data pesanan valid di file ini.</p>`;
         res.className = 'mt-3 p-3 rounded-lg bg-orange-50 border border-orange-100 text-sm';
         res.classList.remove('hidden');
         prog.classList.add('hidden');
         return;
       }
 
-      // Fetch existing (order_no, sku) pairs to detect duplicates by composite key
       prog.textContent = 'Mengecek duplikat di database...';
       const orderNos = [...new Set(records.map(r => r.order_no).filter(Boolean))];
       const { data: existing, error: fetchErr } = await App.db()
@@ -412,35 +640,50 @@ const Penjualan = {
       const skipped     = records.length - newRecords.length;
 
       if (!newRecords.length) {
-        res.innerHTML = `<p class="text-orange-700">Semua <strong>${records.length}</strong> pesanan sudah ada di database. Tidak ada data baru.</p>`;
+        res.innerHTML = `<p class="text-orange-700">Semua <strong>${records.length}</strong> pesanan sudah ada di database.</p>`;
         res.className = 'mt-3 p-3 rounded-lg bg-orange-50 border border-orange-100 text-sm';
         res.classList.remove('hidden');
         prog.classList.add('hidden');
         return;
       }
 
-      prog.textContent = `Menyimpan ${newRecords.length} pesanan baru...`;
+      prog.textContent = `Menyimpan ${newRecords.length} pesanan...`;
       const { error } = await App.db().from('orders').insert(newRecords);
       if (error) throw error;
 
-      const totalOmzet = newRecords.reduce((s, r) => s + r.gross_revenue, 0);
-      const totalNet   = newRecords.reduce((s, r) => s + r.net_revenue,   0);
+      // Count by stok_action
+      const countAction = action => newRecords.filter(r => r.stok_action === action).length;
+      const nKeluar     = countAction('keluar');
+      const nTetap      = countAction('tidak_berubah');
+      const nHilang     = countAction('sudah_keluar_tidak_balik');
+      const nGagal      = countAction('menunggu_barang_kembali');
+      const nReview     = countAction('perlu_review');
+      const totalOmzet  = newRecords.reduce((s, r) => s + r.gross_revenue, 0);
 
       res.innerHTML = `
         <div class="space-y-1">
-          <p class="font-semibold text-green-700">✓ Import berhasil!</p>
-          <p>Pesanan baru: <strong>${newRecords.length}</strong></p>
-          ${skipped ? `<p>Dilewati (sudah ada): <strong>${skipped}</strong></p>` : ''}
-          <p>Total Omzet: <strong>${App.formatRupiah(totalOmzet)}</strong></p>
-          <p>Total Net Diterima: <strong>${App.formatRupiah(totalNet)}</strong></p>
+          <p class="font-semibold text-green-700">Import berhasil!</p>
+          <p>Pesanan baru: <strong>${newRecords.length}</strong>${skipped ? ` (dilewati duplikat: ${skipped})` : ''}</p>
+          <div class="mt-2 text-xs space-y-0.5 border-t border-gray-100 pt-2">
+            ${nKeluar  ? `<p>Stok Keluar: <strong>${nKeluar}</strong></p>` : ''}
+            ${nTetap   ? `<p>Stok Tetap: <strong>${nTetap}</strong></p>` : ''}
+            ${nHilang  ? `<p class="text-orange-600">Paket Hilang (perlu catat kompensasi): <strong>${nHilang}</strong></p>` : ''}
+            ${nGagal   ? `<p class="text-yellow-700">Tunggu Barang Kembali: <strong>${nGagal}</strong></p>` : ''}
+            ${nReview  ? `<p class="text-blue-700 font-semibold">Perlu Review: <strong>${nReview}</strong> — cek tab "Perlu Direview"!</p>` : ''}
+          </div>
+          <p class="text-xs text-gray-500 pt-1">Total Omzet: ${App.formatRupiah(totalOmzet)}</p>
         </div>`;
       res.className = 'mt-3 p-3 rounded-lg bg-green-50 border border-green-100 text-sm';
       res.classList.remove('hidden');
       prog.classList.add('hidden');
 
-      App.toast(`Import selesai: ${records.length} pesanan`, 'success');
+      const reviewWarning = (nReview + nGagal + nHilang) > 0
+        ? ` Ada ${nReview + nGagal + nHilang} pesanan perlu direview!`
+        : '';
+      App.toast(`Import selesai: ${newRecords.length} pesanan.${reviewWarning}`, 'success');
       await this._loadOrders();
       this._renderTab();
+      this._updateReviewBadge();
 
     } catch (err) {
       prog.classList.add('hidden');
@@ -450,9 +693,9 @@ const Penjualan = {
     }
   },
 
-  /* ─────────────────────────────────────────
+  /* ═══════════════════════════════════════════════
      2. IMPORT RETUR / BATAL (ZIP berisi 2 xlsx)
-  ───────────────────────────────────────── */
+  ═══════════════════════════════════════════════ */
   openImportRetBatal() {
     App.openModal({
       title: 'Import Retur & Batal / Gagal Kirim',
@@ -497,15 +740,14 @@ const Penjualan = {
     try {
       if (typeof JSZip === 'undefined') throw new Error('Library JSZip belum dimuat. Coba reload halaman.');
 
-      const zip      = await JSZip.loadAsync(file);
-      const entries  = Object.values(zip.files).filter(f => !f.dir && /\.(xlsx|xls)$/i.test(f.name));
+      const zip     = await JSZip.loadAsync(file);
+      const entries = Object.values(zip.files).filter(f => !f.dir && /\.(xlsx|xls)$/i.test(f.name));
 
       if (!entries.length) throw new Error('Tidak ada file .xlsx di dalam ZIP.');
 
       const col    = this._col.bind(this);
       const toNum  = this._toNum.bind(this);
       const toDate = this._toDate.bind(this);
-
       let allRecords = [];
 
       for (const entry of entries) {
@@ -516,7 +758,6 @@ const Penjualan = {
         const rows = XLSX.utils.sheet_to_json(ws, { raw: false, defval: '' });
         if (!rows.length) continue;
 
-        // Detect type: if any header contains "Alasan" or "Pembatalan" → Batal, else → Gagal Kirim
         const headers     = Object.keys(rows[0] || {});
         const isCancelled = headers.some(h => /alasan|pembatalan|cancel/i.test(h));
         const category    = isCancelled ? 'Batal' : 'Gagal Kirim';
@@ -531,10 +772,10 @@ const Penjualan = {
             delivery_status: !isCancelled
               ? col(r, 'Status Pengiriman', 'Status pengiriman gagal', 'Delivery Status', 'Status Gagal')
               : null,
-            sku:             col(r, 'Nomor Referensi SKU', 'No. SKU Produk', 'SKU'),
-            product_name:    col(r, 'Nama Produk', 'Product Name'),
-            gross_revenue:   toNum(col(r, 'Subtotal Pesanan', 'Subtotal', 'Total Harga')),
-            order_date:      toDate(col(r, 'Waktu Pesanan Dibuat', 'Tanggal Pesanan', 'Order Date')),
+            sku:          col(r, 'Nomor Referensi SKU', 'No. SKU Produk', 'SKU'),
+            product_name: col(r, 'Nama Produk', 'Product Name'),
+            gross_revenue: toNum(col(r, 'Subtotal Pesanan', 'Subtotal', 'Total Harga')),
+            order_date:    toDate(col(r, 'Waktu Pesanan Dibuat', 'Tanggal Pesanan', 'Order Date')),
           }))
           .filter(r => r.order_no);
 
@@ -549,7 +790,7 @@ const Penjualan = {
         return;
       }
 
-      prog.textContent = `Menyimpan ${allRecords.length} data ke database...`;
+      prog.textContent = `Menyimpan ${allRecords.length} data...`;
       const { error } = await App.db()
         .from('returns')
         .upsert(allRecords, { onConflict: 'order_no,category', ignoreDuplicates: true });
@@ -560,16 +801,15 @@ const Penjualan = {
 
       res.innerHTML = `
         <div class="space-y-1">
-          <p class="font-semibold text-green-700">✓ Import berhasil!</p>
+          <p class="font-semibold text-green-700">Import berhasil!</p>
           <p>Pesanan Dibatalkan: <strong>${nBatal}</strong></p>
           <p>Gagal Kirim: <strong>${nGagal}</strong></p>
           <p>Total: <strong>${allRecords.length}</strong> data</p>
-          <p class="text-xs text-gray-400 mt-1">Duplikat (No. Pesanan + kategori sama) dilewati otomatis.</p>
+          <p class="text-xs text-gray-400 mt-1">Duplikat dilewati otomatis.</p>
         </div>`;
       res.className = 'mt-3 p-3 rounded-lg bg-green-50 border border-green-100 text-sm';
       res.classList.remove('hidden');
       prog.classList.add('hidden');
-
       App.toast(`Import retur/batal: ${allRecords.length} data`, 'success');
 
     } catch (err) {
@@ -580,9 +820,9 @@ const Penjualan = {
     }
   },
 
-  /* ─────────────────────────────────────────
-     3. IMPORT INCOME / PENGHASILAN (xlsx — sheet Summary)
-  ───────────────────────────────────────── */
+  /* ═══════════════════════════════════════════════
+     3. IMPORT INCOME / PENGHASILAN (xlsx — Summary)
+  ═══════════════════════════════════════════════ */
   openImportIncome() {
     const now = new Date();
     const bulanNames = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
@@ -637,15 +877,10 @@ const Penjualan = {
     try {
       const buf = await file.arrayBuffer();
       const wb  = XLSX.read(buf, { type: 'array', cellDates: true });
-
-      // Find the Summary/Ringkasan sheet
       const sheetName = wb.SheetNames.find(n => /summary|ringkasan/i.test(n)) || wb.SheetNames[0];
       const ws        = wb.Sheets[sheetName];
+      const rawRows   = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
 
-      // Read as raw rows (header:1) to handle non-tabular key-value layout
-      const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
-
-      // Build a flat label→value map from any adjacent pair of non-empty cells in each row
       const valMap = {};
       for (const row of rawRows) {
         for (let i = 0; i < row.length - 1; i++) {
@@ -658,17 +893,14 @@ const Penjualan = {
       const findVal = (...terms) => {
         for (const term of terms) {
           for (const [label, value] of Object.entries(valMap)) {
-            if (label.includes(term.toLowerCase())) {
-              return this._toNum(value);
-            }
+            if (label.includes(term.toLowerCase())) return this._toNum(value);
           }
         }
         return 0;
       };
 
       const record = {
-        bulan,
-        tahun,
+        bulan, tahun,
         total_pendapatan:     findVal('total pendapatan', 'total revenue', 'pendapatan kotor'),
         voucher_penjual:      findVal('voucher penjual', 'seller voucher'),
         biaya_komisi_ams:     findVal('komisi ams', 'ams commission', 'biaya komisi'),
@@ -680,16 +912,13 @@ const Penjualan = {
       };
 
       prog.textContent = 'Menyimpan ke database...';
-      const { error } = await App.db()
-        .from('income_summary')
-        .upsert(record, { onConflict: 'bulan,tahun' });
+      const { error } = await App.db().from('income_summary').upsert(record, { onConflict: 'bulan,tahun' });
       if (error) throw error;
 
       const bulanNames = ['','Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
-
       res.innerHTML = `
         <div class="space-y-1">
-          <p class="font-semibold text-green-700">✓ Income ${bulanNames[bulan]} ${tahun} berhasil disimpan!</p>
+          <p class="font-semibold text-green-700">Income ${bulanNames[bulan]} ${tahun} berhasil disimpan!</p>
           <div class="mt-2 space-y-0.5 text-xs text-gray-700 border-t border-gray-100 pt-2">
             <p>Total Pendapatan: <strong>${App.formatRupiah(record.total_pendapatan)}</strong></p>
             <p>Voucher Penjual: <strong>${App.formatRupiah(record.voucher_penjual)}</strong></p>
@@ -704,7 +933,6 @@ const Penjualan = {
       res.className = 'mt-3 p-3 rounded-lg bg-green-50 border border-green-100 text-sm';
       res.classList.remove('hidden');
       prog.classList.add('hidden');
-
       App.toast(`Income ${bulanNames[bulan]} ${tahun} berhasil diimport!`, 'success');
 
     } catch (err) {
@@ -715,9 +943,9 @@ const Penjualan = {
     }
   },
 
-  /* ─────────────────────────────────────────
-     TAMBAH MANUAL
-  ───────────────────────────────────────── */
+  /* ═══════════════════════════════════════════════
+     TAMBAH / EDIT MANUAL
+  ═══════════════════════════════════════════════ */
   openManual(order = null) {
     const o = order || {};
     App.openModal({
@@ -737,7 +965,15 @@ const Penjualan = {
         <div><label class="label">Ekspedisi</label><input id="m-exp" class="input" value="${o.expedition||''}" placeholder="JNE, J&T, dll"/></div>
         <div><label class="label">Status *</label>
           <select id="m-status" class="input">
-            ${['Selesai','Dibatalkan','Gagal','Dikembalikan'].map(s=>`<option ${o.status===s?'selected':''}>${s}</option>`).join('')}
+            ${['Selesai','Perlu Dikirim','Sedang Dikirim','Dibatalkan','Dikembalikan','Gagal'].map(s=>`<option ${o.status===s?'selected':''}>${s}</option>`).join('')}
+          </select>
+        </div>
+        <div><label class="label">Stok Action</label>
+          <select id="m-stok-action" class="input">
+            <option value="">— Otomatis dari Status —</option>
+            <option value="keluar" ${o.stok_action==='keluar'?'selected':''}>Stok Keluar</option>
+            <option value="tidak_berubah" ${o.stok_action==='tidak_berubah'?'selected':''}>Stok Tetap</option>
+            <option value="perlu_review" ${o.stok_action==='perlu_review'?'selected':''}>Perlu Review</option>
           </select>
         </div>
         <div><label class="label">Sumber</label>
@@ -766,9 +1002,11 @@ const Penjualan = {
     const price = +document.getElementById('m-price').value || 0;
     if (!name || !price) { App.toast('Nama produk dan harga wajib diisi.', 'warning'); return; }
 
-    const qty   = +document.getElementById('m-qty').value   || 1;
-    const gross = +document.getElementById('m-gross').value || qty * price;
-    const net   = +document.getElementById('m-net').value   || gross;
+    const qty       = +document.getElementById('m-qty').value   || 1;
+    const gross     = +document.getElementById('m-gross').value || qty * price;
+    const net       = +document.getElementById('m-net').value   || gross;
+    const status    = document.getElementById('m-status').value;
+    const stokInput = document.getElementById('m-stok-action').value;
 
     const payload = {
       order_no:     document.getElementById('m-order-no').value.trim() || null,
@@ -781,7 +1019,8 @@ const Penjualan = {
       gross_revenue: gross,
       net_revenue:   net,
       expedition:    document.getElementById('m-exp').value.trim(),
-      status:        document.getElementById('m-status').value,
+      status,
+      stok_action:   stokInput || this._determineStokAction(status, ''),
       source:        document.getElementById('m-source').value,
       notes:         document.getElementById('m-notes').value.trim(),
     };
@@ -798,21 +1037,42 @@ const Penjualan = {
       App.toast('Pesanan disimpan!', 'success');
       await this._loadOrders();
       this._renderTab();
+      this._updateReviewBadge();
     } catch (err) {
       App.toast('Error: ' + err.message, 'error');
     }
   },
 
+  /* ═══════════════════════════════════════════════
+     HAPUS PESANAN (per baris)
+  ═══════════════════════════════════════════════ */
   async deleteOrder(id) {
-    const ok = await App.confirm('Hapus pesanan ini? Data tidak bisa dikembalikan.');
+    const order = this._orders.find(o => o.id === id);
+    const DEDUCT = ['keluar', 'sudah_keluar_tidak_balik', 'menunggu_barang_kembali'];
+    const affectsStok = order && DEDUCT.includes(order.stok_action);
+
+    let msg = 'Hapus pesanan ini?';
+    if (affectsStok) {
+      msg = `Hapus pesanan ini?\n\nKarena stok pesanan ini sudah dicatat keluar, stok ${order.qty||1} unit SKU "${order.sku||'-'}" akan otomatis kembali setelah dihapus.`;
+    } else if (order && !order.stok_action && order.status === 'Selesai') {
+      msg = `Hapus pesanan ini? Stok ${order.qty||1} unit SKU "${order.sku||'-'}" akan otomatis kembali.`;
+    }
+
+    const ok = await App.confirm(msg);
     if (!ok) return;
+
     const { error } = await App.db().from('orders').delete().eq('id', id);
     if (error) { App.toast('Gagal hapus: ' + error.message, 'error'); return; }
-    App.toast('Pesanan dihapus.', 'success');
+
+    App.toast('Pesanan dihapus.' + (affectsStok ? ' Stok dikembalikan.' : ''), 'success');
     this._orders = this._orders.filter(o => o.id !== id);
     this._renderTab();
+    this._updateReviewBadge();
   },
 
+  /* ═══════════════════════════════════════════════
+     HAPUS DATA PERIODE (Owner only)
+  ═══════════════════════════════════════════════ */
   openHapusPeriode() {
     if (!App.isOwner()) { App.toast('Hanya Owner yang bisa menghapus data.', 'warning'); return; }
     const now = new Date();
@@ -846,7 +1106,6 @@ const Penjualan = {
     const dateTo   = `${tahun}-${bulan}-31`;
 
     App.closeModal();
-
     const ok = await App.confirm(`Hapus semua pesanan bulan ${label}? Tidak bisa dibatalkan.`);
     if (!ok) return;
 
@@ -857,10 +1116,10 @@ const Penjualan = {
         .gte('order_date', dateFrom)
         .lte('order_date', dateTo);
       if (error) throw error;
-
       App.toast(`Data pesanan ${label} berhasil dihapus.`, 'success');
       await this._loadOrders();
       this._renderTab();
+      this._updateReviewBadge();
     } catch (err) {
       App.toast('Gagal hapus: ' + err.message, 'error');
     }

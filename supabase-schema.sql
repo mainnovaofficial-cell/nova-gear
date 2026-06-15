@@ -219,6 +219,47 @@ insert into settings (key, value) values
 on conflict (key) do nothing;
 
 -- ═══════════════════════════════════════════════════════
+--  MIGRASI v3 — Manajemen Stok
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- 1. Kolom baru di orders
+alter table orders add column if not exists cancel_reason text;
+alter table orders add column if not exists stok_action   text;
+-- stok_action values:
+--   'keluar'                  — stok berkurang (Selesai, Perlu Dikirim, Sedang Dikirim, dll)
+--   'tidak_berubah'           — batal tanpa dampak stok
+--   'sudah_keluar_tidak_balik'— paket hilang, stok tidak kembali
+--   'menunggu_barang_kembali' — gagal kirim, tunggu konfirmasi barang balik
+--   'barang_kembali'          — sudah dikonfirmasi barang kembali
+--   'perlu_review'            — alasan tidak dikenali, perlu Owner tentukan
+--   'kompensasi_selesai'      — paket hilang sudah dicatat kompensasi
+
+-- 2. Backfill stok_action untuk data lama yang sudah Selesai
+update orders set stok_action = 'keluar'
+  where status = 'Selesai' and stok_action is null;
+
+-- 3. Tabel stok awal per SKU (input manual Owner)
+create table if not exists stok_awal (
+  id           uuid primary key default gen_random_uuid(),
+  sku          text unique not null,
+  product_name text,
+  qty          integer default 0,
+  notes        text,
+  updated_at   timestamptz default now(),
+  created_at   timestamptz default now()
+);
+
+-- 4. Tabel stok_adjust (penyesuaian manual — sudah ada di kode lama, buat jika belum)
+create table if not exists stok_adjust (
+  id         uuid primary key default gen_random_uuid(),
+  sku        text,
+  qty        integer,
+  notes      text,
+  created_at timestamptz default now()
+);
+
+-- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup
 --  Untuk production, gunakan Supabase Auth + RLS policies.
 --  Untuk sementara (anon key): disable RLS di table settings.
