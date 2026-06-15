@@ -41,7 +41,7 @@ const Dashboard = {
     const all       = orders || [];
     const selesai   = all.filter(o => o.status === 'Selesai');
     const batal     = all.filter(o => o.status === 'Batal');
-    const gagal     = all.filter(o => o.status === 'Gagal');
+    const gagal     = all.filter(o => o.status === 'Gagal Kirim');
     const retur     = all.filter(o => o.status === 'Dikembalikan');
     const diproses  = all.filter(o => o.status === 'Diproses');
     const diprosesHariIni = diproses.filter(o => (o.created_at || '').slice(0, 10) === today);
