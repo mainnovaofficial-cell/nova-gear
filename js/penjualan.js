@@ -29,9 +29,13 @@ const Penjualan = {
         <p>Import file Shopee atau tambah pesanan manual</p>
       </div>
       <div class="flex gap-2 flex-wrap">
-        <button onclick="Penjualan.openImportPesanan()" class="btn-secondary text-xs">
+        <button onclick="Penjualan.openImportHarian()" class="btn-secondary text-xs">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-          Import Pesanan
+          Import Harian
+        </button>
+        <button onclick="Penjualan.openImportMingguan()" class="btn-secondary text-xs">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+          Import Mingguan
         </button>
         <button onclick="Penjualan.openImportRetBatal()" class="btn-secondary text-xs">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8l1 12a2 2 0 002 2h8a2 2 0 002-2L19 8M10 12v4m4-4v4"/></svg>
@@ -80,6 +84,10 @@ const Penjualan = {
         Perlu Direview
         <span id="pj-review-badge" class="hidden ml-1.5 bg-red-500 text-white text-xs rounded-full px-1.5 py-0.5 leading-none font-bold">0</span>
       </button>
+      <button class="tab-btn"        onclick="Penjualan._switchTab('batal', this)">
+        Batal
+        <span id="pj-batal-badge" class="hidden ml-1.5 bg-gray-500 text-white text-xs rounded-full px-1.5 py-0.5 leading-none font-bold">0</span>
+      </button>
     </div>
 
     <div id="pj-tab-content"></div>`;
@@ -93,12 +101,19 @@ const Penjualan = {
 
   _updateReviewBadge() {
     const badge = document.getElementById('pj-review-badge');
-    if (!badge) return;
-    const count = this._orders.filter(o =>
-      ['menunggu_barang_kembali', 'perlu_review', 'sudah_keluar_tidak_balik'].includes(o.stok_action)
-    ).length;
-    badge.textContent = count;
-    badge.classList.toggle('hidden', count === 0);
+    if (badge) {
+      const count = this._orders.filter(o =>
+        ['menunggu_barang_kembali', 'perlu_review', 'sudah_keluar_tidak_balik'].includes(o.stok_action)
+      ).length;
+      badge.textContent = count;
+      badge.classList.toggle('hidden', count === 0);
+    }
+    const batalBadge = document.getElementById('pj-batal-badge');
+    if (batalBadge) {
+      const n = this._orders.filter(o => o.status === 'Batal').length;
+      batalBadge.textContent = n;
+      batalBadge.classList.toggle('hidden', n === 0);
+    }
   },
 
   _filtered() {
@@ -135,6 +150,7 @@ const Penjualan = {
     if (this._tab === 'status')  el.innerHTML = this._tableStatus(data);
     if (this._tab === 'harian')  el.innerHTML = this._tableHarian(data);
     if (this._tab === 'review')  el.innerHTML = this._tableReview();
+    if (this._tab === 'batal')   el.innerHTML = this._tableBatal();
   },
 
   /* ── STATUS & STOK HELPERS ── */
@@ -193,9 +209,10 @@ const Penjualan = {
       const m = { Selesai:'badge-green', Diproses:'badge-blue', 'Gagal Kirim':'badge-red', Batal:'badge-gray' };
       return `<span class="badge ${m[s]||'badge-gray'}">${s||'-'}</span>`;
     };
-    const deleteBtn = id => `
-      <button onclick="Penjualan.deleteOrder('${id}')" class="text-gray-300 hover:text-red-500 transition-colors" title="Hapus">
-        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+    const batalBtn = (id, status) => status === 'Batal' ? '' : `
+      <button onclick="Penjualan.batalkanOrder('${id}')"
+              class="text-xs text-orange-400 hover:text-orange-600 transition-colors font-medium whitespace-nowrap">
+        Batalkan
       </button>`;
 
     const groups = [];
@@ -231,7 +248,7 @@ const Penjualan = {
           <td>${isFirst ? statusBadge(o.status) : ''}</td>
           <td>${isFirst ? this._stokActionBadge(o.stok_action) : ''}</td>
           <td>${isFirst ? `<span class="badge ${o.source==='offline'?'badge-orange':'badge-blue'}">${o.source||'shopee'}</span>` : ''}</td>
-          <td>${deleteBtn(o.id)}</td>
+          <td>${isFirst ? batalBtn(o.id, o.status) : ''}</td>
         </tr>`;
       });
     });
@@ -447,6 +464,66 @@ const Penjualan = {
     </div>`;
   },
 
+  /* ── TAB: BATAL ── */
+  _tableBatal() {
+    const items = this._orders.filter(o => o.status === 'Batal')
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+
+    if (!items.length) return `
+      <div class="empty-state card py-16 mt-4">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" class="w-12 h-12 text-gray-300 mx-auto mb-3">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <p class="text-gray-500">Tidak ada pesanan batal.</p>
+      </div>`;
+
+    return `
+    <div class="table-wrapper mt-4">
+      <table class="data-table">
+        <thead><tr>
+          <th>No. Pesanan</th><th>Tanggal</th><th>Produk</th><th>SKU</th>
+          <th class="text-center">Qty</th><th>Alasan</th><th>Stok</th>
+        </tr></thead>
+        <tbody>${items.map(o => `<tr>
+          <td class="font-mono text-xs text-gray-500">${o.order_no || 'manual'}</td>
+          <td class="whitespace-nowrap text-sm">${App.formatDate(o.order_date)}</td>
+          <td class="max-w-[180px] truncate text-sm" title="${o.product_name||''}">${o.product_name||'-'}</td>
+          <td class="font-mono text-xs">${o.sku||'-'}</td>
+          <td class="text-center font-semibold">${o.qty||1}</td>
+          <td class="text-xs text-gray-500 max-w-[200px] truncate" title="${o.cancel_reason||''}">${o.cancel_reason||'-'}</td>
+          <td>${this._stokActionBadge(o.stok_action)}</td>
+        </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  },
+
+  /* ── BATALKAN PESANAN (per baris) ── */
+  async batalkanOrder(id) {
+    const order = this._orders.find(o => o.id === id);
+    if (!order) return;
+
+    const msg = `Batalkan pesanan ${order.order_no || 'ini'} (SKU: ${order.sku||'-'}, ${order.qty||1} unit)?\nStok akan otomatis dikembalikan.`;
+    const ok = await App.confirm(msg);
+    if (!ok) return;
+
+    const { error } = await App.db().from('orders').update({
+      status: 'Batal',
+      stok_action: 'tidak_berubah',
+    }).eq('id', id);
+
+    if (error) { App.toast('Gagal membatalkan: ' + error.message, 'error'); return; }
+
+    App.toast('Pesanan dibatalkan. Stok dikembalikan.', 'success');
+    const idx = this._orders.findIndex(o => o.id === id);
+    if (idx !== -1) {
+      this._orders[idx].status = 'Batal';
+      this._orders[idx].stok_action = 'tidak_berubah';
+    }
+    this._updateReviewBadge();
+    this._renderTab();
+  },
+
   _reviewActions(o) {
     if (o.stok_action === 'menunggu_barang_kembali') {
       return `
@@ -583,15 +660,15 @@ const Penjualan = {
   },
 
   /* ═══════════════════════════════════════════════
-     1. IMPORT PESANAN (xlsx — semua status)
+     1a. IMPORT HARIAN — Perlu Dikirim (insert baru)
   ═══════════════════════════════════════════════ */
-  openImportPesanan() {
+  openImportHarian() {
     App.openModal({
-      title: 'Import File Pesanan Shopee',
+      title: 'Import Harian — Perlu Dikirim',
       size: 'max-w-xl',
       body: `
-        <p class="text-sm text-gray-600 mb-3">Upload file <strong>.xlsx</strong> pesanan dari Shopee Seller Center.
-        Pesanan baru akan ditambahkan. Pesanan yang sudah ada akan <strong>diupdate statusnya</strong> jika berubah.</p>
+        <p class="text-sm text-gray-600 mb-3">Upload file <strong>.xlsx</strong> Perlu Dikirim dari Shopee Seller Center.
+        Tambah pesanan baru &amp; kurangi stok. Pesanan yang sudah ada di database dilewati.</p>
         <div class="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700 mb-3 space-y-1">
           <p class="font-semibold">Pemetaan status Shopee → Nova Gear:</p>
           <p>• Perlu Dikirim / Sedang Dikirim → <strong>Diproses</strong> (stok keluar)</p>
@@ -608,14 +685,47 @@ const Penjualan = {
           </svg>
           <p class="text-sm text-gray-500">Klik atau seret file .xlsx ke sini</p>
           <input id="imp-pesanan-file" type="file" accept=".xlsx,.xls" class="hidden"
-                 onchange="Penjualan.importPesananFile(this.files[0])"/>
+                 onchange="Penjualan.importPesananFile(this.files[0], 'harian')"/>
         </div>
         <div id="imp-progress" class="hidden mt-4 text-sm text-blue-600 text-center font-medium"></div>
         <div id="imp-result"   class="hidden mt-3 p-3 rounded-lg text-sm"></div>`,
     });
   },
 
-  async importPesananFile(file) {
+  /* ═══════════════════════════════════════════════
+     1b. IMPORT MINGGUAN — semua pesanan (update status)
+  ═══════════════════════════════════════════════ */
+  openImportMingguan() {
+    App.openModal({
+      title: 'Import Mingguan — Update Status',
+      size: 'max-w-xl',
+      body: `
+        <p class="text-sm text-gray-600 mb-3">Upload file <strong>.xlsx</strong> semua pesanan dari Shopee Seller Center.
+        Update status pesanan yang sudah ada. Pesanan baru tidak ditambahkan.</p>
+        <div class="bg-amber-50 border border-amber-100 rounded-lg p-3 text-xs text-amber-800 mb-3 space-y-1">
+          <p class="font-semibold">Yang terjadi saat import mingguan:</p>
+          <p>• Diproses → Selesai: status &amp; stok diperbarui</p>
+          <p>• Diproses → Gagal Kirim: ditandai menunggu barang kembali</p>
+          <p>• Diproses → Batal: stok otomatis dikembalikan</p>
+          <p>• Pesanan baru di file ini akan dilewati</p>
+        </div>
+        <div class="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer
+                    hover:border-amber-300 hover:bg-amber-50/30 transition-colors"
+             onclick="document.getElementById('imp-pesanan-file').click()">
+          <svg class="w-10 h-10 text-gray-300 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+          </svg>
+          <p class="text-sm text-gray-500">Klik atau seret file .xlsx ke sini</p>
+          <input id="imp-pesanan-file" type="file" accept=".xlsx,.xls" class="hidden"
+                 onchange="Penjualan.importPesananFile(this.files[0], 'mingguan')"/>
+        </div>
+        <div id="imp-progress" class="hidden mt-4 text-sm text-amber-600 text-center font-medium"></div>
+        <div id="imp-result"   class="hidden mt-3 p-3 rounded-lg text-sm"></div>`,
+    });
+  },
+
+  async importPesananFile(file, mode = 'harian') {
     if (!file) return;
     const prog = document.getElementById('imp-progress');
     const res  = document.getElementById('imp-result');
@@ -711,80 +821,98 @@ const Penjualan = {
         // status sama → tidak perlu apa-apa
       }
 
-      // ── Insert baru (batch 200)
+      // ── Insert baru (harian only, batch 200)
       let migrationWarning = false;
       let insertError = null;
-      const INSERT_BATCH = 200;
-      for (let i = 0; i < toInsert.length; i += INSERT_BATCH) {
-        const batch = toInsert.slice(i, i + INSERT_BATCH);
-        prog.textContent = `Menyimpan pesanan baru... (${Math.min(i + INSERT_BATCH, toInsert.length)}/${toInsert.length})`;
-        let { error } = await App.db().from('orders').insert(batch);
+      if (mode === 'harian') {
+        const INSERT_BATCH = 200;
+        for (let i = 0; i < toInsert.length; i += INSERT_BATCH) {
+          const batch = toInsert.slice(i, i + INSERT_BATCH);
+          prog.textContent = `Menyimpan pesanan baru... (${Math.min(i + INSERT_BATCH, toInsert.length)}/${toInsert.length})`;
+          let { error } = await App.db().from('orders').insert(batch);
 
-        // Fallback: kolom stok_action / cancel_reason belum ada (migrasi v3 belum dijalankan)
-        if (error && (error.message === 'Bad Request' ||
-            (error.message || '').includes('stok_action') ||
-            (error.message || '').includes('cancel_reason'))) {
-          const stripped = batch.map(({ cancel_reason, stok_action, ...rec }) => rec);
-          ({ error } = await App.db().from('orders').insert(stripped));
-          migrationWarning = true;
+          // Fallback: kolom stok_action / cancel_reason belum ada (migrasi v3 belum dijalankan)
+          if (error && (error.message === 'Bad Request' ||
+              (error.message || '').includes('stok_action') ||
+              (error.message || '').includes('cancel_reason'))) {
+            const stripped = batch.map(({ cancel_reason, stok_action, ...rec }) => rec);
+            ({ error } = await App.db().from('orders').insert(stripped));
+            migrationWarning = true;
+          }
+          if (error) { insertError = error; break; }
         }
-        if (error) { insertError = error; break; }
+        if (insertError) throw new Error(`Gagal insert: ${insertError.message}${insertError.details ? ' — ' + insertError.details : ''} (kode: ${insertError.code || '-'})`);
       }
-      if (insertError) throw new Error(`Gagal insert: ${insertError.message}${insertError.details ? ' — ' + insertError.details : ''} (kode: ${insertError.code || '-'})`);
 
-      // ── Update status yang berubah (batch 100 order_no per request)
+      // ── Update status yang berubah (mingguan only, batch 100 order_no per request)
       let totalUpdated = 0;
-      const updateGroupList = Object.values(toUpdateGroups);
-      for (const group of updateGroupList) {
-        const nos = [...group.orderNos];
-        for (let i = 0; i < nos.length; i += BATCH) {
-          const chunk = nos.slice(i, i + BATCH);
-          prog.textContent = `Mengupdate status... (${totalUpdated + chunk.length} order)`;
-          const { error: updErr } = await App.db()
-            .from('orders')
-            .update(group.fields)
-            .in('order_no', chunk);
-          if (updErr) throw new Error(`Gagal update status: ${updErr.message}`);
-          totalUpdated += chunk.length;
+      if (mode === 'mingguan') {
+        const updateGroupList = Object.values(toUpdateGroups);
+        for (const group of updateGroupList) {
+          const nos = [...group.orderNos];
+          for (let i = 0; i < nos.length; i += BATCH) {
+            const chunk = nos.slice(i, i + BATCH);
+            prog.textContent = `Mengupdate status... (${totalUpdated + chunk.length} order)`;
+            const { error: updErr } = await App.db()
+              .from('orders')
+              .update(group.fields)
+              .in('order_no', chunk);
+            if (updErr) throw new Error(`Gagal update status: ${updErr.message}`);
+            totalUpdated += chunk.length;
+          }
         }
       }
 
       // ── Tampilkan hasil
-      const countByStatus = s => toInsert.filter(r => r.status === s).length;
-      const nDiproses  = countByStatus('Diproses');
-      const nSelesai   = countByStatus('Selesai');
-      const nGagal     = countByStatus('Gagal Kirim');
-      const nBatal     = countByStatus('Batal');
-      const totalOmzet = toInsert.reduce((s, r) => s + r.gross_revenue, 0);
-      const nReview    = toInsert.filter(r => r.stok_action === 'sudah_keluar_tidak_balik').length;
+      if (mode === 'harian') {
+        const countByStatus = s => toInsert.filter(r => r.status === s).length;
+        const nDiproses  = countByStatus('Diproses');
+        const nSelesai   = countByStatus('Selesai');
+        const nGagal     = countByStatus('Gagal Kirim');
+        const nBatal     = countByStatus('Batal');
+        const totalOmzet = toInsert.reduce((s, r) => s + r.gross_revenue, 0);
+        const nReview    = toInsert.filter(r => r.stok_action === 'sudah_keluar_tidak_balik').length;
+        res.innerHTML = `
+          <div class="space-y-1">
+            <p class="font-semibold text-green-700">Import Harian selesai!</p>
+            <p class="text-xs text-gray-600">Pesanan baru ditambahkan: <strong>${toInsert.length}</strong></p>
+            ${migrationWarning ? `
+            <div class="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
+              <strong>Migrasi v3 belum dijalankan</strong> — fitur stok_action tidak aktif.
+            </div>` : `
+            <div class="mt-2 text-xs space-y-0.5 border-t border-gray-100 pt-2">
+              ${nDiproses ? `<p><span class="font-medium text-blue-700">Diproses:</span> ${nDiproses}</p>` : ''}
+              ${nSelesai  ? `<p><span class="font-medium text-green-700">Selesai:</span> ${nSelesai}</p>` : ''}
+              ${nGagal    ? `<p><span class="font-medium text-red-600">Gagal Kirim:</span> ${nGagal}</p>` : ''}
+              ${nBatal    ? `<p><span class="font-medium text-gray-500">Batal:</span> ${nBatal}</p>` : ''}
+              ${nReview   ? `<p class="text-orange-600 font-semibold">Paket Hilang: ${nReview}</p>` : ''}
+            </div>`}
+            <p class="text-xs text-gray-500 pt-1">Total Omzet baru: ${App.formatRupiah(totalOmzet)}</p>
+          </div>`;
+        App.toast(`Import Harian: ${toInsert.length} pesanan baru`, 'success');
+      } else {
+        const updatesByStatus = {};
+        for (const g of Object.values(toUpdateGroups)) {
+          const s = g.fields.status;
+          updatesByStatus[s] = (updatesByStatus[s] || 0) + g.orderNos.size;
+        }
+        const uRows = Object.entries(updatesByStatus);
+        const badgeMap = { Selesai:'text-green-700', Diproses:'text-blue-700', 'Gagal Kirim':'text-red-600', Batal:'text-gray-500' };
+        res.innerHTML = `
+          <div class="space-y-1">
+            <p class="font-semibold text-green-700">Import Mingguan selesai!</p>
+            <p class="text-xs text-gray-600">Status diperbarui: <strong>${totalUpdated}</strong> pesanan</p>
+            ${uRows.length ? `<div class="mt-2 text-xs space-y-0.5 border-t border-gray-100 pt-2">
+              ${uRows.map(([s, n]) => `<p><span class="font-medium ${badgeMap[s]||'text-gray-600'}">${s}:</span> ${n}</p>`).join('')}
+            </div>` : `<p class="text-xs text-gray-400 mt-1">Tidak ada perubahan status.</p>`}
+          </div>`;
+        App.toast(`Import Mingguan: ${totalUpdated} status diperbarui`, 'success');
+      }
 
-      res.innerHTML = `
-        <div class="space-y-1">
-          <p class="font-semibold text-green-700">Import berhasil!</p>
-          <div class="mt-2 text-xs space-y-0.5 border-t border-gray-100 pt-2">
-            <p>Pesanan baru ditambahkan: <strong>${toInsert.length}</strong></p>
-            <p>Status diperbarui: <strong>${totalUpdated}</strong> order</p>
-          </div>
-          ${migrationWarning ? `
-          <div class="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
-            <strong>Migrasi v3 belum dijalankan</strong> — fitur stok_action tidak aktif.
-            Jalankan SQL migrasi v3 di Supabase.
-          </div>` : `
-          <div class="mt-2 text-xs space-y-0.5 border-t border-gray-100 pt-2">
-            ${nDiproses ? `<p><span class="font-medium text-blue-700">Diproses:</span> ${nDiproses}</p>` : ''}
-            ${nSelesai  ? `<p><span class="font-medium text-green-700">Selesai:</span> ${nSelesai}</p>` : ''}
-            ${nGagal    ? `<p><span class="font-medium text-red-600">Gagal Kirim:</span> ${nGagal}</p>` : ''}
-            ${nBatal    ? `<p><span class="font-medium text-gray-500">Batal:</span> ${nBatal}</p>` : ''}
-            ${nReview   ? `<p class="text-orange-600 font-semibold">Paket Hilang (perlu kompensasi): ${nReview}</p>` : ''}
-          </div>`}
-          <p class="text-xs text-gray-500 pt-1">Total Omzet baru: ${App.formatRupiah(totalOmzet)}</p>
-        </div>`;
       res.className = 'mt-3 p-3 rounded-lg bg-green-50 border border-green-100 text-sm';
       res.classList.remove('hidden');
       prog.classList.add('hidden');
 
-      const toastExtra = totalUpdated > 0 ? ` · ${totalUpdated} status diperbarui` : '';
-      App.toast(`Import selesai: ${toInsert.length} baru${toastExtra}`, 'success');
       await this._loadOrders();
       this._renderTab();
       this._updateReviewBadge();
