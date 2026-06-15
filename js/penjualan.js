@@ -10,6 +10,7 @@ const Penjualan = {
   _tab: 'semua',
   _orders: [],
   _filter: { status: '', q: '', dateFrom: '', dateTo: '' },
+  _harianDate: '',
 
   async onLoad() {
     const el = document.getElementById('page-penjualan');
@@ -226,8 +227,6 @@ const Penjualan = {
           <td class="font-mono text-xs">${o.sku||'-'}</td>
           <td class="text-center">${o.qty||1}</td>
           <td class="text-money">${App.formatRupiah(o.selling_price)}</td>
-          <td class="text-money">${App.formatRupiah(o.gross_revenue)}</td>
-          <td class="text-money">${isFirst ? App.formatRupiah(o.net_revenue) : ''}</td>
           <td>${isFirst ? (o.expedition||'-') : ''}</td>
           <td>${isFirst ? statusBadge(o.status) : ''}</td>
           <td>${isFirst ? this._stokActionBadge(o.stok_action) : ''}</td>
@@ -242,7 +241,7 @@ const Penjualan = {
       <table class="data-table">
         <thead><tr>
           <th>No. Pesanan</th><th>Tanggal</th><th>Produk</th><th>SKU</th><th>Qty</th>
-          <th>Harga Jual</th><th>Subtotal</th><th>Net</th><th>Ekspedisi</th>
+          <th>Harga Jual</th><th>Ekspedisi</th>
           <th>Status</th><th>Stok</th><th>Sumber</th><th></th>
         </tr></thead>
         <tbody>${rows.join('')}</tbody>
@@ -294,37 +293,101 @@ const Penjualan = {
   },
 
   /* ── TAB: REKAP HARIAN ── */
-  _tableHarian(data) {
-    const map = {};
-    const netByOrder = {};
-    data.forEach(o => {
-      const d   = o.order_date?.slice(0,10) || 'Tanpa Tanggal';
-      const key = o.order_no || o.id;
-      if (!map[d]) map[d] = { orderNos: new Set(), selesaiNos: new Set(), omzet: 0, net: 0 };
-      map[d].orderNos.add(key);
-      map[d].omzet += +o.gross_revenue || 0;
-      if (!netByOrder[key]) {
-        netByOrder[key] = { d, net: +o.net_revenue || 0 };
-        map[d].net += netByOrder[key].net;
-      }
-      if (o.status === 'Selesai') map[d].selesaiNos.add(key);
-    });
-    const rows = Object.entries(map).sort((a,b) => b[0].localeCompare(a[0]));
-    if (!rows.length) return `<div class="empty-state"><p>Tidak ada data</p></div>`;
+  _tableHarian(_data) {
+    const today = App.todayISO();
+    if (!this._harianDate) this._harianDate = today;
+    const sel  = this._harianDate;
+
+    // Previous day
+    const prevD = new Date(sel + 'T12:00:00');
+    prevD.setDate(prevD.getDate() - 1);
+    const prev = prevD.toISOString().slice(0, 10);
+
+    // Use all loaded orders (independent from global search/status filter)
+    const dayAll  = this._orders.filter(o => (o.order_date || '').slice(0, 10) === sel);
+    const prevAll = this._orders.filter(o => (o.order_date || '').slice(0, 10) === prev);
+
+    const uniqueNos  = new Set(dayAll.map(o  => o.order_no || o.id));
+    const prevNos    = new Set(prevAll.map(o => o.order_no || o.id));
+    const omzet      = dayAll.reduce((s, o)  => s + (+o.gross_revenue || 0), 0);
+    const prevOmzet  = prevAll.reduce((s, o) => s + (+o.gross_revenue || 0), 0);
+    const selesaiNos = new Set(dayAll.filter(o => o.status === 'Selesai').map(o => o.order_no || o.id));
+
+    const diffOrders = uniqueNos.size - prevNos.size;
+    const diffOmzet  = omzet - prevOmzet;
+
+    const diffColor = n => n > 0 ? 'text-green-600' : n < 0 ? 'text-red-500' : 'text-gray-400';
+    const arrow     = n => n > 0 ? '↑' : n < 0 ? '↓' : '→';
+    const sign      = n => n > 0 ? '+' : '';
+
+    const statusBadge = s => {
+      const m = { Selesai:'badge-green', Diproses:'badge-blue', 'Gagal Kirim':'badge-red', Batal:'badge-gray' };
+      return `<span class="badge ${m[s]||'badge-gray'}">${s||'-'}</span>`;
+    };
+
+    const tableHtml = dayAll.length === 0
+      ? `<div class="empty-state card py-12 mt-4"><p>Tidak ada pesanan pada tanggal ini.</p></div>`
+      : `<div class="table-wrapper mt-4">
+          <table class="data-table">
+            <thead><tr>
+              <th>No. Pesanan</th><th>Produk</th><th>SKU</th>
+              <th class="text-center">Qty</th><th>Omzet</th><th>Status</th>
+            </tr></thead>
+            <tbody>${dayAll.map(o => `<tr>
+              <td class="font-mono text-xs text-gray-500">${o.order_no || 'manual'}</td>
+              <td class="max-w-[200px] truncate text-sm" title="${o.product_name||''}">${o.product_name||'-'}</td>
+              <td class="font-mono text-xs">${o.sku||'-'}</td>
+              <td class="text-center">${o.qty||1}</td>
+              <td class="text-money">${App.formatRupiah(o.gross_revenue)}</td>
+              <td>${statusBadge(o.status)}</td>
+            </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`;
+
     return `
-    <div class="table-wrapper">
-      <table class="data-table">
-        <thead><tr><th>Tanggal</th><th>Total Pesanan</th><th>Total Item</th><th>Selesai</th><th>Total Omzet</th><th>Total Net</th></tr></thead>
-        <tbody>${rows.map(([d, v]) => `<tr>
-          <td class="font-medium">${App.formatDate(d)}</td>
-          <td class="font-semibold">${App.formatNumber(v.orderNos.size)}</td>
-          <td class="text-gray-500">${App.formatNumber(data.filter(o=>(o.order_date?.slice(0,10)||'Tanpa Tanggal')===d).length)}</td>
-          <td><span class="badge badge-green">${v.selesaiNos.size}</span></td>
-          <td class="text-money">${App.formatRupiah(v.omzet)}</td>
-          <td class="text-money">${App.formatRupiah(v.net)}</td>
-        </tr>`).join('')}</tbody>
-      </table>
-    </div>`;
+    <div class="card mt-4 !py-3">
+      <div class="flex flex-wrap gap-3 items-center">
+        <label class="text-sm font-medium text-gray-600">Tanggal:</label>
+        <input type="date" value="${sel}" max="${today}" class="input w-40 !py-1.5 text-xs"
+               onchange="Penjualan._setHarianDate(this.value)"/>
+        ${sel !== today ? `<button onclick="Penjualan._setHarianDate('${today}')" class="btn-secondary text-xs !py-1.5">Hari Ini</button>` : ''}
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+      <div class="stat-card">
+        <p class="stat-label">Total Pesanan</p>
+        <p class="text-2xl font-bold text-gray-800">${uniqueNos.size}</p>
+        ${prevNos.size > 0 || diffOrders !== 0
+          ? `<p class="text-xs mt-1 font-medium ${diffColor(diffOrders)}">${arrow(diffOrders)} ${sign(diffOrders)}${diffOrders} vs hari sebelumnya</p>`
+          : `<p class="stat-sub text-xs mt-1">Tidak ada data hari sebelumnya</p>`}
+      </div>
+      <div class="stat-card">
+        <p class="stat-label">Total Item</p>
+        <p class="text-2xl font-bold text-gray-800">${dayAll.length}</p>
+        <p class="stat-sub">&nbsp;</p>
+      </div>
+      <div class="stat-card">
+        <p class="stat-label">Selesai</p>
+        <p class="text-2xl font-bold text-green-600">${selesaiNos.size}</p>
+        <p class="stat-sub">&nbsp;</p>
+      </div>
+      <div class="stat-card">
+        <p class="stat-label">Total Omzet</p>
+        <p class="text-lg font-bold text-money truncate">${App.formatRupiah(omzet)}</p>
+        ${prevNos.size > 0 || diffOmzet !== 0
+          ? `<p class="text-xs mt-1 font-medium ${diffColor(diffOmzet)}">${arrow(diffOmzet)} ${sign(diffOmzet)}${App.formatRupiah(Math.abs(diffOmzet))} vs hari sebelumnya</p>`
+          : `<p class="stat-sub text-xs mt-1">Tidak ada data hari sebelumnya</p>`}
+      </div>
+    </div>
+
+    ${tableHtml}`;
+  },
+
+  _setHarianDate(d) {
+    this._harianDate = d;
+    this._renderTab();
   },
 
   /* ── TAB: PERLU DIREVIEW ── */

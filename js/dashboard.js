@@ -26,7 +26,7 @@ const Dashboard = {
       { data: opData,    error: e4 },
       { data: scanToday, error: e5 },
     ] = await Promise.all([
-      db.from('orders').select('status,gross_revenue,net_revenue,shopee_commission,shopee_service_fee,shopee_ads_fee,shopee_other_fee,order_date,expedition'),
+      db.from('orders').select('status,gross_revenue,net_revenue,shopee_commission,shopee_service_fee,shopee_ads_fee,shopee_other_fee,order_date,expedition,created_at'),
       db.from('hpp').select('total_cost'),
       db.from('ads').select('cost'),
       db.from('operational').select('cost'),
@@ -37,11 +37,14 @@ const Dashboard = {
     const settings  = await App.getSettings();
     const modalAwal = parseFloat(settings.modal_awal || 0);
 
+    const today     = App.todayISO();
     const all       = orders || [];
     const selesai   = all.filter(o => o.status === 'Selesai');
     const batal     = all.filter(o => o.status === 'Dibatalkan');
     const gagal     = all.filter(o => o.status === 'Gagal');
     const retur     = all.filter(o => o.status === 'Dikembalikan');
+    const diproses  = all.filter(o => o.status === 'Diproses');
+    const diprosesHariIni = diproses.filter(o => (o.created_at || '').slice(0, 10) === today);
 
     const sum       = (arr, key) => arr.reduce((s, r) => s + (+r[key] || 0), 0);
     const omzet     = sum(selesai, 'gross_revenue');
@@ -97,8 +100,9 @@ const Dashboard = {
       </div>
 
       <!-- Row 2: Order Status -->
-      <div class="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-5">
-        ${this._miniCard('Dikirim Hari Ini', scans.length, 'bg-blue-50 border-blue-100', 'text-blue-700')}
+      <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 mb-5">
+        ${this._miniCard('Dikirim Hari Ini', diprosesHariIni.length, 'bg-blue-50 border-blue-100', 'text-blue-700')}
+        ${this._miniCard('Total Diproses', diproses.length, 'bg-indigo-50 border-indigo-100', 'text-indigo-700')}
         ${this._miniCard('Berhasil', selesai.length, 'bg-green-50 border-green-100', 'text-green-700')}
         ${this._miniCard('Dibatalkan', batal.length, 'bg-gray-50 border-gray-200', 'text-gray-600')}
         ${this._miniCard('Gagal Kirim', gagal.length, 'bg-red-50 border-red-100', 'text-red-700')}
