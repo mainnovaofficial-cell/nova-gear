@@ -1344,7 +1344,9 @@ const Penjualan = {
     const bulanNames = ['','Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
     const label    = `${bulanNames[parseInt(bulan)]} ${tahun}`;
     const dateFrom = `${tahun}-${bulan}-01`;
-    const dateTo   = `${tahun}-${bulan}-31`;
+    // Hitung awal bulan berikutnya agar tidak perlu tahu jumlah hari per bulan
+    const nextMonth = new Date(parseInt(tahun), parseInt(bulan), 1); // bulan JS 0-based, jadi parseInt(bulan) = bulan berikutnya
+    const dateNext  = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
 
     App.closeModal();
     const ok = await App.confirm(`Hapus semua pesanan bulan ${label}? Tidak bisa dibatalkan.`);
@@ -1355,7 +1357,7 @@ const Penjualan = {
         .from('orders')
         .delete()
         .gte('order_date', dateFrom)
-        .lte('order_date', dateTo);
+        .lt('order_date', dateNext);
       if (error) throw error;
       App.toast(`Data pesanan ${label} berhasil dihapus.`, 'success');
       await this._loadOrders();
