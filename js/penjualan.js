@@ -630,19 +630,24 @@ const Penjualan = {
       prog.textContent = 'Mengecek duplikat di database...';
       const orderNos = [...new Set(records.map(r => r.order_no).filter(Boolean))];
 
-      // Guard: .in() dengan array kosong menyebabkan "Bad Request" di supabase-js
-      let existingSet = new Set();
-      if (orderNos.length > 0) {
+      // Batch cek duplikat: .in() di PostgREST dikirim lewat URL query string,
+      // sehingga array besar (1000+ item) melebihi batas panjang URL → Bad Request.
+      // Solusi: potong orderNos menjadi batch 100, gabungkan hasilnya.
+      const existingSet = new Set();
+      const BATCH = 100;
+      for (let i = 0; i < orderNos.length; i += BATCH) {
+        const chunk = orderNos.slice(i, i + BATCH);
+        prog.textContent = `Mengecek duplikat... (${Math.min(i + BATCH, orderNos.length)}/${orderNos.length})`;
         const { data: existing, error: fetchErr } = await App.db()
           .from('orders')
           .select('order_no, sku')
-          .in('order_no', orderNos);
+          .in('order_no', chunk);
         if (fetchErr) {
           throw new Error(`Gagal cek duplikat: ${fetchErr.message}` +
             (fetchErr.details ? ` — ${fetchErr.details}` : '') +
             (fetchErr.hint   ? ` (hint: ${fetchErr.hint})` : ''));
         }
-        existingSet = new Set((existing || []).map(r => `${r.order_no}||${r.sku||''}`));
+        (existing || []).forEach(r => existingSet.add(`${r.order_no}||${r.sku||''}`));
       }
 
       const newRecords = records.filter(r => !existingSet.has(`${r.order_no}||${r.sku||''}`));
@@ -656,25 +661,35 @@ const Penjualan = {
         return;
       }
 
-      prog.textContent = `Menyimpan ${newRecords.length} pesanan...`;
-      let { error } = await App.db().from('orders').insert(newRecords);
-
-      // Fallback: jika kolom cancel_reason / stok_action belum ada (migrasi v3 belum dijalankan),
-      // Supabase mengembalikan "Bad Request" (HTTP 400). Coba insert tanpa kolom baru.
+      // Insert dalam batch 200 agar tidak kena batas ukuran request
       let migrationWarning = false;
-      if (error && (
-        error.message === 'Bad Request' ||
-        (error.message || '').includes('stok_action') ||
-        (error.message || '').includes('cancel_reason') ||
-        (error.details || '').includes('stok_action') ||
-        (error.details || '').includes('cancel_reason')
-      )) {
-        prog.textContent = 'Kolom baru belum ada, mencoba insert tanpa stok_action...';
-        const stripped = newRecords.map(({ cancel_reason, stok_action, ...r }) => r);
-        const fallback = await App.db().from('orders').insert(stripped);
-        error = fallback.error;
-        migrationWarning = true;
+      const INSERT_BATCH = 200;
+      const insertBatches = [];
+      for (let i = 0; i < newRecords.length; i += INSERT_BATCH) {
+        insertBatches.push(newRecords.slice(i, i + INSERT_BATCH));
       }
+
+      let insertError = null;
+      for (let b = 0; b < insertBatches.length; b++) {
+        prog.textContent = `Menyimpan pesanan... (${Math.min((b + 1) * INSERT_BATCH, newRecords.length)}/${newRecords.length})`;
+        let { error } = await App.db().from('orders').insert(insertBatches[b]);
+
+        // Fallback: kolom cancel_reason / stok_action belum ada (migrasi v3 belum dijalankan)
+        if (error && (
+          error.message === 'Bad Request' ||
+          (error.message || '').includes('stok_action') ||
+          (error.message || '').includes('cancel_reason') ||
+          (error.details || '').includes('stok_action') ||
+          (error.details || '').includes('cancel_reason')
+        )) {
+          const stripped = insertBatches[b].map(({ cancel_reason, stok_action, ...r }) => r);
+          ({ error } = await App.db().from('orders').insert(stripped));
+          migrationWarning = true;
+        }
+
+        if (error) { insertError = error; break; }
+      }
+      const error = insertError;
 
       if (error) {
         throw new Error(
