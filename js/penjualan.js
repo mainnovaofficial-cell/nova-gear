@@ -58,12 +58,10 @@ const Penjualan = {
         <input id="pj-search" type="text" placeholder="Cari no. pesanan / produk / SKU..." class="input w-56 !py-1.5 text-xs" oninput="Penjualan._onFilter()"/>
         <select id="pj-status" class="input w-44 !py-1.5 text-xs" onchange="Penjualan._onFilter()">
           <option value="">Semua Status</option>
+          <option>Diproses</option>
           <option>Selesai</option>
-          <option>Perlu Dikirim</option>
-          <option>Sedang Dikirim</option>
-          <option>Dibatalkan</option>
-          <option>Dikembalikan</option>
-          <option>Gagal</option>
+          <option>Gagal Kirim</option>
+          <option>Batal</option>
         </select>
         <input id="pj-from" type="date" class="input w-36 !py-1.5 text-xs" onchange="Penjualan._onFilter()"/>
         <input id="pj-to"   type="date" class="input w-36 !py-1.5 text-xs" onchange="Penjualan._onFilter()"/>
@@ -138,34 +136,36 @@ const Penjualan = {
     if (this._tab === 'review')  el.innerHTML = this._tableReview();
   },
 
-  /* ── STOK ACTION HELPERS ── */
-  _determineStokAction(status, cancelReason) {
-    const s = (status || '').trim();
-    const sLow = s.toLowerCase();
-    const r = (cancelReason || '').toLowerCase().trim();
+  /* ── STATUS & STOK HELPERS ── */
 
-    // Statuses that deduct stock
-    if (['selesai', 'completed'].some(x => sLow === x)) return 'keluar';
-    if (['perlu dikirim', 'to ship', 'to_ship'].some(x => sLow.includes(x))) return 'keluar';
-    if (['sedang dikirim', 'shipped', 'in delivery', 'dikirim'].some(x => sLow.includes(x))) return 'keluar';
-    if (sLow.includes('pesanan diterima') || sLow.includes('order received')) return 'keluar';
+  // Petakan status Shopee mentah → 4 status internal Nova Gear.
+  // Return null berarti baris harus dilewati (mis. Menunggu Pembayaran).
+  _mapStatus(shopeeStatus, cancelReason) {
+    const s = (shopeeStatus || '').toLowerCase().trim();
+    const r = (cancelReason  || '').toLowerCase().trim();
 
-    // Cancelled / Batal — check reason
-    if (sLow.includes('batal') || sLow.includes('cancel')) {
-      if (!r) return 'tidak_berubah';
-      if (r.includes('pembeli') || r.includes('buyer')) return 'tidak_berubah';
-      if (r.includes('produk habis') || r.includes('out of stock') || r.includes('stok habis')) return 'tidak_berubah';
-      if (r.includes('belum dibayar') || r.includes('unpaid') || r.includes('not paid') || r.includes('pembayaran')) return 'tidak_berubah';
-      if ((r.includes('lainnya') || r.includes('others') || r.includes('other')) &&
-          !r.includes('paket') && !r.includes('pengiriman')) return 'tidak_berubah';
-      if (r.includes('paket hilang') || r.includes('lost parcel') || r.includes('package lost') || r.includes('hilang')) return 'sudah_keluar_tidak_balik';
-      if (r.includes('pengiriman gagal') || r.includes('gagal kirim') || r.includes('delivery failed') || r.includes('failed delivery')) return 'menunggu_barang_kembali';
-      return 'perlu_review';
+    if (s === 'selesai' || s === 'completed') return 'Selesai';
+    if (s.includes('pesanan diterima') || s.includes('order received')) return 'Selesai';
+    if (s.includes('perlu dikirim') || s.includes('to ship') || s.includes('to_ship')) return 'Diproses';
+    if (s.includes('sedang dikirim') || s.includes('shipped') || s.includes('in delivery')) return 'Diproses';
+    if (s.includes('batal') || s.includes('cancel')) {
+      if (r.includes('pengiriman gagal') || r.includes('gagal kirim') ||
+          r.includes('delivery failed')  || r.includes('failed delivery')) return 'Gagal Kirim';
+      return 'Batal';
     }
+    if (s.includes('dikembalikan') || s.includes('return')) return 'Gagal Kirim';
+    return null; // Menunggu Pembayaran, dll — lewati
+  },
 
-    // Dikembalikan / returned
-    if (sLow.includes('dikembalikan') || sLow.includes('return')) return 'menunggu_barang_kembali';
-
+  // Tentukan dampak stok berdasarkan status internal (bukan status Shopee mentah).
+  _determineStokAction(internalStatus, cancelReason) {
+    if (internalStatus === 'Diproses' || internalStatus === 'Selesai') return 'keluar';
+    if (internalStatus === 'Gagal Kirim') return 'menunggu_barang_kembali';
+    if (internalStatus === 'Batal') {
+      const r = (cancelReason || '').toLowerCase();
+      if (r.includes('paket hilang') || r.includes('package lost') || r.includes('hilang')) return 'sudah_keluar_tidak_balik';
+      return 'tidak_berubah';
+    }
     return 'tidak_berubah';
   },
 
@@ -189,8 +189,7 @@ const Penjualan = {
     if (!data.length) return `<div class="empty-state"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg><p>Tidak ada pesanan</p></div>`;
 
     const statusBadge = s => {
-      const m = { Selesai:'badge-green', Dibatalkan:'badge-gray', Gagal:'badge-red', Dikembalikan:'badge-orange',
-                  'Perlu Dikirim':'badge-blue', 'Sedang Dikirim':'badge-blue' };
+      const m = { Selesai:'badge-green', Diproses:'badge-blue', 'Gagal Kirim':'badge-red', Batal:'badge-gray' };
       return `<span class="badge ${m[s]||'badge-gray'}">${s||'-'}</span>`;
     };
     const deleteBtn = id => `
@@ -268,8 +267,7 @@ const Penjualan = {
     });
     const rows = Object.entries(map);
     if (!rows.length) return `<div class="empty-state"><p>Tidak ada data</p></div>`;
-    const badgeMap = { Selesai:'badge-green', Dibatalkan:'badge-gray', Gagal:'badge-red', Dikembalikan:'badge-orange',
-                       'Perlu Dikirim':'badge-blue', 'Sedang Dikirim':'badge-blue' };
+    const badgeMap = { Selesai:'badge-green', Diproses:'badge-blue', 'Gagal Kirim':'badge-red', Batal:'badge-gray' };
     const totalOrders = new Set(data.map(o => o.order_no || o.id)).size;
     const totalOmzet  = data.reduce((s, o) => s + (+o.gross_revenue||0), 0);
     const totalNet    = Object.values(netByOrder).reduce((s, v) => s + v, 0);
@@ -539,14 +537,13 @@ const Penjualan = {
       size: 'max-w-xl',
       body: `
         <p class="text-sm text-gray-600 mb-3">Upload file <strong>.xlsx</strong> pesanan dari Shopee Seller Center.
-        Semua status pesanan diimport (kecuali Menunggu Pembayaran). Stok dihitung otomatis berdasarkan status &amp; alasan pembatalan.</p>
+        Pesanan baru akan ditambahkan. Pesanan yang sudah ada akan <strong>diupdate statusnya</strong> jika berubah.</p>
         <div class="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700 mb-3 space-y-1">
-          <p class="font-semibold">Logika stok otomatis:</p>
-          <p>• <strong>Stok Keluar:</strong> Selesai, Perlu Dikirim, Sedang Dikirim, Pesanan Diterima</p>
-          <p>• <strong>Stok Tetap:</strong> Batal oleh Pembeli/Penjual (habis stok), Belum Dibayar, Lainnya</p>
-          <p>• <strong>Paket Hilang:</strong> Stok keluar tidak kembali → perlu catat kompensasi</p>
-          <p>• <strong>Gagal Kirim:</strong> Stok keluar → tunggu konfirmasi barang kembali</p>
-          <p>• <strong>Alasan tidak dikenali:</strong> Ditandai "Perlu Review"</p>
+          <p class="font-semibold">Pemetaan status Shopee → Nova Gear:</p>
+          <p>• Perlu Dikirim / Sedang Dikirim → <strong>Diproses</strong> (stok keluar)</p>
+          <p>• Selesai / Pesanan Diterima → <strong>Selesai</strong> (stok keluar)</p>
+          <p>• Batal (pengiriman gagal) → <strong>Gagal Kirim</strong> (tunggu barang kembali)</p>
+          <p>• Batal (alasan lain) → <strong>Batal</strong> (stok tetap)</p>
         </div>
         <div class="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer
                     hover:border-blue-300 hover:bg-blue-50/30 transition-colors"
@@ -584,15 +581,15 @@ const Penjualan = {
       const toNum  = this._toNum.bind(this);
       const toDate = this._toDate.bind(this);
 
-      // Skip statuses that are not yet processed (payment pending)
-      const SKIP = ['menunggu pembayaran', 'unpaid', 'waiting for payment', 'pending payment'];
-
       prog.textContent = `Memproses ${rows.length} baris...`;
 
+      // Parse semua baris, petakan ke 4 status internal, lewati status tidak relevan
       const records = rows
         .map(r => {
-          const statusRaw    = col(r, 'Status Pesanan', 'Status', 'Order Status');
+          const shopeeStatus = col(r, 'Status Pesanan', 'Status', 'Order Status');
           const cancelReason = col(r, 'Alasan Pembatalan', 'Alasan Pembatalan Pesanan', 'Cancel Reason', 'Cancellation Reason');
+          const status       = this._mapStatus(shopeeStatus, cancelReason);
+          if (!status) return null; // Menunggu Pembayaran, dll → lewati
           return {
             order_no:         col(r, 'No. Pesanan', 'No Pesanan', 'Order ID'),
             sku:              col(r, 'Nomor Referensi SKU', 'No. SKU Produk', 'SKU'),
@@ -605,19 +602,13 @@ const Penjualan = {
             net_revenue:      toNum(col(r, 'Total Pembayaran', 'Total Penghasilan', 'Net Revenue')),
             order_date:       toDate(col(r, 'Waktu Pesanan Dibuat', 'Tanggal Pesanan', 'Order Date')),
             expedition:       col(r, 'Opsi Pengiriman', 'Ekspedisi', 'Kurir', 'Shipping'),
-            status:           statusRaw,
+            status,
             cancel_reason:    cancelReason || null,
             source:           'shopee',
-            stok_action:      this._determineStokAction(statusRaw, cancelReason),
-            _statusLow:       statusRaw.toLowerCase(),
+            stok_action:      this._determineStokAction(status, cancelReason),
           };
         })
-        .filter(r => {
-          if (!r.order_no) return false;
-          if (SKIP.some(s => r._statusLow.includes(s))) return false;
-          return true;
-        })
-        .map(({ _statusLow, ...r }) => r);
+        .filter(r => r && r.order_no);
 
       if (!records.length) {
         res.innerHTML = `<p class="text-orange-700">Tidak ada data pesanan valid di file ini.</p>`;
@@ -627,114 +618,119 @@ const Penjualan = {
         return;
       }
 
-      prog.textContent = 'Mengecek duplikat di database...';
-      const orderNos = [...new Set(records.map(r => r.order_no).filter(Boolean))];
-
-      // Batch cek duplikat: .in() di PostgREST dikirim lewat URL query string,
-      // sehingga array besar (1000+ item) melebihi batas panjang URL → Bad Request.
-      // Solusi: potong orderNos menjadi batch 100, gabungkan hasilnya.
-      const existingSet = new Set();
+      // ── Fetch existing records (batch 100) — ambil juga status untuk deteksi perubahan
+      const orderNos   = [...new Set(records.map(r => r.order_no))];
+      const existingMap = new Map(); // "order_no||sku" → { status }
       const BATCH = 100;
       for (let i = 0; i < orderNos.length; i += BATCH) {
         const chunk = orderNos.slice(i, i + BATCH);
-        prog.textContent = `Mengecek duplikat... (${Math.min(i + BATCH, orderNos.length)}/${orderNos.length})`;
+        prog.textContent = `Mengecek database... (${Math.min(i + BATCH, orderNos.length)}/${orderNos.length})`;
         const { data: existing, error: fetchErr } = await App.db()
           .from('orders')
-          .select('order_no, sku')
+          .select('order_no, sku, status')
           .in('order_no', chunk);
-        if (fetchErr) {
-          throw new Error(`Gagal cek duplikat: ${fetchErr.message}` +
-            (fetchErr.details ? ` — ${fetchErr.details}` : '') +
-            (fetchErr.hint   ? ` (hint: ${fetchErr.hint})` : ''));
+        if (fetchErr) throw new Error(`Gagal cek database: ${fetchErr.message}${fetchErr.details ? ' — ' + fetchErr.details : ''}`);
+        (existing || []).forEach(r => existingMap.set(`${r.order_no}||${r.sku||''}`, { status: r.status }));
+      }
+
+      // ── Pisahkan: insert baru vs update status yang berubah
+      const toInsert = [];
+      // toUpdateGroups: key = "newStatus__stokAction" → { fields, orderNos[] }
+      // Di-group agar banyak order_no bisa diupdate dalam satu .in() call
+      const toUpdateGroups = {};
+
+      for (const r of records) {
+        const key      = `${r.order_no}||${r.sku||''}`;
+        const existing = existingMap.get(key);
+        if (!existing) {
+          toInsert.push(r);
+        } else if (existing.status !== r.status) {
+          const groupKey = `${r.status}__${r.stok_action || ''}`;
+          if (!toUpdateGroups[groupKey]) {
+            toUpdateGroups[groupKey] = {
+              fields:   { status: r.status, stok_action: r.stok_action, cancel_reason: r.cancel_reason },
+              orderNos: new Set(),
+            };
+          }
+          toUpdateGroups[groupKey].orderNos.add(r.order_no);
         }
-        (existing || []).forEach(r => existingSet.add(`${r.order_no}||${r.sku||''}`));
+        // status sama → tidak perlu apa-apa
       }
 
-      const newRecords = records.filter(r => !existingSet.has(`${r.order_no}||${r.sku||''}`));
-      const skipped    = records.length - newRecords.length;
-
-      if (!newRecords.length) {
-        res.innerHTML = `<p class="text-orange-700">Semua <strong>${records.length}</strong> pesanan sudah ada di database.</p>`;
-        res.className = 'mt-3 p-3 rounded-lg bg-orange-50 border border-orange-100 text-sm';
-        res.classList.remove('hidden');
-        prog.classList.add('hidden');
-        return;
-      }
-
-      // Insert dalam batch 200 agar tidak kena batas ukuran request
+      // ── Insert baru (batch 200)
       let migrationWarning = false;
-      const INSERT_BATCH = 200;
-      const insertBatches = [];
-      for (let i = 0; i < newRecords.length; i += INSERT_BATCH) {
-        insertBatches.push(newRecords.slice(i, i + INSERT_BATCH));
-      }
-
       let insertError = null;
-      for (let b = 0; b < insertBatches.length; b++) {
-        prog.textContent = `Menyimpan pesanan... (${Math.min((b + 1) * INSERT_BATCH, newRecords.length)}/${newRecords.length})`;
-        let { error } = await App.db().from('orders').insert(insertBatches[b]);
+      const INSERT_BATCH = 200;
+      for (let i = 0; i < toInsert.length; i += INSERT_BATCH) {
+        const batch = toInsert.slice(i, i + INSERT_BATCH);
+        prog.textContent = `Menyimpan pesanan baru... (${Math.min(i + INSERT_BATCH, toInsert.length)}/${toInsert.length})`;
+        let { error } = await App.db().from('orders').insert(batch);
 
-        // Fallback: kolom cancel_reason / stok_action belum ada (migrasi v3 belum dijalankan)
-        if (error && (
-          error.message === 'Bad Request' ||
-          (error.message || '').includes('stok_action') ||
-          (error.message || '').includes('cancel_reason') ||
-          (error.details || '').includes('stok_action') ||
-          (error.details || '').includes('cancel_reason')
-        )) {
-          const stripped = insertBatches[b].map(({ cancel_reason, stok_action, ...r }) => r);
+        // Fallback: kolom stok_action / cancel_reason belum ada (migrasi v3 belum dijalankan)
+        if (error && (error.message === 'Bad Request' ||
+            (error.message || '').includes('stok_action') ||
+            (error.message || '').includes('cancel_reason'))) {
+          const stripped = batch.map(({ cancel_reason, stok_action, ...rec }) => rec);
           ({ error } = await App.db().from('orders').insert(stripped));
           migrationWarning = true;
         }
-
         if (error) { insertError = error; break; }
       }
-      const error = insertError;
+      if (insertError) throw new Error(`Gagal insert: ${insertError.message}${insertError.details ? ' — ' + insertError.details : ''} (kode: ${insertError.code || '-'})`);
 
-      if (error) {
-        throw new Error(
-          `${error.message || 'Unknown error'}` +
-          (error.details ? `\nDetail: ${error.details}` : '') +
-          (error.hint    ? `\nHint: ${error.hint}` : '') +
-          (error.code    ? ` (kode: ${error.code})` : '')
-        );
+      // ── Update status yang berubah (batch 100 order_no per request)
+      let totalUpdated = 0;
+      const updateGroupList = Object.values(toUpdateGroups);
+      for (const group of updateGroupList) {
+        const nos = [...group.orderNos];
+        for (let i = 0; i < nos.length; i += BATCH) {
+          const chunk = nos.slice(i, i + BATCH);
+          prog.textContent = `Mengupdate status... (${totalUpdated + chunk.length} order)`;
+          const { error: updErr } = await App.db()
+            .from('orders')
+            .update(group.fields)
+            .in('order_no', chunk);
+          if (updErr) throw new Error(`Gagal update status: ${updErr.message}`);
+          totalUpdated += chunk.length;
+        }
       }
 
-      // Count by stok_action
-      const countAction = action => newRecords.filter(r => r.stok_action === action).length;
-      const nKeluar     = countAction('keluar');
-      const nTetap      = countAction('tidak_berubah');
-      const nHilang     = countAction('sudah_keluar_tidak_balik');
-      const nGagal      = countAction('menunggu_barang_kembali');
-      const nReview     = countAction('perlu_review');
-      const totalOmzet  = newRecords.reduce((s, r) => s + r.gross_revenue, 0);
+      // ── Tampilkan hasil
+      const countByStatus = s => toInsert.filter(r => r.status === s).length;
+      const nDiproses  = countByStatus('Diproses');
+      const nSelesai   = countByStatus('Selesai');
+      const nGagal     = countByStatus('Gagal Kirim');
+      const nBatal     = countByStatus('Batal');
+      const totalOmzet = toInsert.reduce((s, r) => s + r.gross_revenue, 0);
+      const nReview    = toInsert.filter(r => r.stok_action === 'sudah_keluar_tidak_balik').length;
 
       res.innerHTML = `
         <div class="space-y-1">
           <p class="font-semibold text-green-700">Import berhasil!</p>
-          <p>Pesanan baru: <strong>${newRecords.length}</strong>${skipped ? ` (dilewati duplikat: ${skipped})` : ''}</p>
+          <div class="mt-2 text-xs space-y-0.5 border-t border-gray-100 pt-2">
+            <p>Pesanan baru ditambahkan: <strong>${toInsert.length}</strong></p>
+            <p>Status diperbarui: <strong>${totalUpdated}</strong> order</p>
+          </div>
           ${migrationWarning ? `
           <div class="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
-            <strong>Migrasi v3 belum dijalankan</strong> — pencatatan stok_action tidak aktif.
-            Jalankan SQL migrasi v3 di Supabase untuk mengaktifkan fitur stok otomatis.
+            <strong>Migrasi v3 belum dijalankan</strong> — fitur stok_action tidak aktif.
+            Jalankan SQL migrasi v3 di Supabase.
           </div>` : `
           <div class="mt-2 text-xs space-y-0.5 border-t border-gray-100 pt-2">
-            ${nKeluar  ? `<p>Stok Keluar: <strong>${nKeluar}</strong></p>` : ''}
-            ${nTetap   ? `<p>Stok Tetap: <strong>${nTetap}</strong></p>` : ''}
-            ${nHilang  ? `<p class="text-orange-600">Paket Hilang (perlu catat kompensasi): <strong>${nHilang}</strong></p>` : ''}
-            ${nGagal   ? `<p class="text-yellow-700">Tunggu Barang Kembali: <strong>${nGagal}</strong></p>` : ''}
-            ${nReview  ? `<p class="text-blue-700 font-semibold">Perlu Review: <strong>${nReview}</strong> — cek tab "Perlu Direview"!</p>` : ''}
+            ${nDiproses ? `<p><span class="font-medium text-blue-700">Diproses:</span> ${nDiproses}</p>` : ''}
+            ${nSelesai  ? `<p><span class="font-medium text-green-700">Selesai:</span> ${nSelesai}</p>` : ''}
+            ${nGagal    ? `<p><span class="font-medium text-red-600">Gagal Kirim:</span> ${nGagal}</p>` : ''}
+            ${nBatal    ? `<p><span class="font-medium text-gray-500">Batal:</span> ${nBatal}</p>` : ''}
+            ${nReview   ? `<p class="text-orange-600 font-semibold">Paket Hilang (perlu kompensasi): ${nReview}</p>` : ''}
           </div>`}
-          <p class="text-xs text-gray-500 pt-1">Total Omzet: ${App.formatRupiah(totalOmzet)}</p>
+          <p class="text-xs text-gray-500 pt-1">Total Omzet baru: ${App.formatRupiah(totalOmzet)}</p>
         </div>`;
       res.className = 'mt-3 p-3 rounded-lg bg-green-50 border border-green-100 text-sm';
       res.classList.remove('hidden');
       prog.classList.add('hidden');
 
-      const reviewWarning = (nReview + nGagal + nHilang) > 0
-        ? ` Ada ${nReview + nGagal + nHilang} pesanan perlu direview!`
-        : '';
-      App.toast(`Import selesai: ${newRecords.length} pesanan.${reviewWarning}`, 'success');
+      const toastExtra = totalUpdated > 0 ? ` · ${totalUpdated} status diperbarui` : '';
+      App.toast(`Import selesai: ${toInsert.length} baru${toastExtra}`, 'success');
       await this._loadOrders();
       this._renderTab();
       this._updateReviewBadge();
@@ -1028,7 +1024,7 @@ const Penjualan = {
         <div><label class="label">Ekspedisi</label><input id="m-exp" class="input" value="${o.expedition||''}" placeholder="JNE, J&T, dll"/></div>
         <div><label class="label">Status *</label>
           <select id="m-status" class="input">
-            ${['Selesai','Perlu Dikirim','Sedang Dikirim','Dibatalkan','Dikembalikan','Gagal'].map(s=>`<option ${o.status===s?'selected':''}>${s}</option>`).join('')}
+            ${['Diproses','Selesai','Gagal Kirim','Batal'].map(s=>`<option ${o.status===s?'selected':''}>${s}</option>`).join('')}
           </select>
         </div>
         <div><label class="label">Stok Action</label>
