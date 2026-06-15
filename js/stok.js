@@ -56,8 +56,8 @@ const Stok = {
       ] = await Promise.all([
         db.from('hpp').select('sku,product_name,qty'),
         db.from('orders').select('sku,product_name,qty,stok_action,status'),
-        db.from('stok_adjust').select('sku,qty').catch(() => ({ data: [] })),
-        db.from('stok_awal').select('sku,product_name,qty').catch(() => ({ data: [] })),
+        db.from('stok_adjust').select('sku,qty').then(r => r, () => ({ data: [] })),
+        db.from('stok_awal').select('sku,product_name,qty').then(r => r, () => ({ data: [] })),
       ]);
 
       // SKU map: { sku → { name, awal, masuk, keluar, adjust } }
@@ -165,7 +165,7 @@ const Stok = {
       ] = await Promise.all([
         db.from('hpp').select('sku,product_name,qty,purchase_date,batch_no,notes').order('purchase_date', { ascending: false }),
         db.from('orders').select('sku,product_name,qty,stok_action,status,order_date,order_no,cancel_reason').order('order_date', { ascending: false }),
-        db.from('stok_adjust').select('sku,qty,notes,created_at').order('created_at', { ascending: false }).catch(() => ({ data: [] })),
+        db.from('stok_adjust').select('sku,qty,notes,created_at').order('created_at', { ascending: false }).then(r => r, () => ({ data: [] })),
       ]);
 
       const DEDUCT = new Set(['keluar', 'sudah_keluar_tidak_balik', 'menunggu_barang_kembali']);
