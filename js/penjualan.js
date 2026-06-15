@@ -164,7 +164,7 @@ const Penjualan = {
     if (s === 'selesai' || s === 'completed') return 'Selesai';
     if (s.includes('pesanan diterima') || s.includes('order received')) return 'Selesai';
     if (s.includes('perlu dikirim') || s.includes('to ship') || s.includes('to_ship')) return 'Diproses';
-    if (s.includes('sedang dikirim') || s.includes('shipped') || s.includes('in delivery')) return 'Diproses';
+    if (s.includes('sedang dikirim') || s.includes('telah dikirim') || s.includes('shipped') || s.includes('in delivery')) return 'Diproses';
     if (s.includes('batal') || s.includes('cancel')) {
       if (r.includes('pengiriman gagal') || r.includes('gagal kirim') ||
           r.includes('delivery failed')  || r.includes('failed delivery')) return 'Gagal Kirim';
@@ -671,7 +671,7 @@ const Penjualan = {
         Tambah pesanan baru &amp; kurangi stok. Pesanan yang sudah ada di database dilewati.</p>
         <div class="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700 mb-3 space-y-1">
           <p class="font-semibold">Pemetaan status Shopee → Nova Gear:</p>
-          <p>• Perlu Dikirim / Sedang Dikirim → <strong>Diproses</strong> (stok keluar)</p>
+          <p>• Perlu Dikirim / Sedang Dikirim / Telah Dikirim → <strong>Diproses</strong> (stok keluar)</p>
           <p>• Selesai / Pesanan Diterima → <strong>Selesai</strong> (stok keluar)</p>
           <p>• Batal (pengiriman gagal) → <strong>Gagal Kirim</strong> (tunggu barang kembali)</p>
           <p>• Batal (alasan lain) → <strong>Batal</strong> (stok tetap)</p>
