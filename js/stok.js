@@ -7,6 +7,7 @@
 
 const Stok = {
   _tab: 'rekap',
+  _rowData: {},
 
   async onLoad() {
     const el = document.getElementById('page-stok');
@@ -17,6 +18,7 @@ const Stok = {
         <p>Manajemen stok per SKU — stok awal, masuk HPP, keluar pesanan</p>
       </div>
       <div class="flex gap-2">
+        <button onclick="Stok.openTambahProduk()" class="btn-secondary text-xs">Tambah Produk</button>
         <button onclick="Stok.openAdjust()" class="btn-secondary text-xs">Penyesuaian Manual</button>
         <button onclick="Stok.onLoad()" class="btn-primary text-xs">Refresh</button>
       </div>
@@ -95,6 +97,8 @@ const Stok = {
       });
 
       const rows = Object.values(map).sort((a, b) => a.sku.localeCompare(b.sku));
+      this._rowData = {};
+      rows.forEach(r => { this._rowData[r.sku] = r; });
 
       if (!rows.length) {
         el.innerHTML = `<div class="empty-state card py-16 mt-4">
@@ -133,7 +137,7 @@ const Stok = {
               <td class="text-right font-bold text-lg text-money">${App.formatNumber(sisa)}</td>
               <td><span class="badge ${sc}">${sl}</span></td>
               <td>
-                <button onclick="Stok.editStokAwal('${r.sku}','${r.name.replace(/'/g,"\\'")}',${r.awal})"
+                <button onclick="Stok.editStokAwal('${r.sku.replace(/'/g, "\\'")}')"
                         class="text-xs text-blue-500 hover:text-blue-700 font-medium whitespace-nowrap">
                   Edit Stok Awal
                 </button>
@@ -262,7 +266,9 @@ const Stok = {
   },
 
   /* ── EDIT STOK AWAL ── */
-  editStokAwal(sku, nama, current) {
+  editStokAwal(sku) {
+    const row = this._rowData[sku] || { name: sku, awal: 0 };
+    const escapedSku = sku.replace(/'/g, "\\'");
     App.openModal({
       title: 'Edit Stok Awal',
       body: `
@@ -274,11 +280,11 @@ const Stok = {
           </div>
           <div>
             <label class="label">Nama Produk</label>
-            <input id="sa-nama" class="input" value="${nama}" placeholder="Nama produk (opsional)"/>
+            <input id="sa-nama" class="input" placeholder="Nama produk (opsional)"/>
           </div>
           <div>
             <label class="label">Stok Awal *</label>
-            <input id="sa-qty" type="number" min="0" class="input" value="${current}" placeholder="0"/>
+            <input id="sa-qty" type="number" min="0" class="input" value="${row.awal}" placeholder="0"/>
           </div>
           <div>
             <label class="label">Catatan</label>
@@ -287,8 +293,13 @@ const Stok = {
         </div>`,
       footer: `
         <button onclick="App.closeModal()" class="btn-secondary">Batal</button>
-        <button onclick="Stok.saveStokAwal('${sku}')" class="btn-primary">Simpan</button>`,
+        <button onclick="Stok.saveStokAwal('${escapedSku}')" class="btn-primary">Simpan</button>`,
     });
+    // Set nama after DOM render to avoid HTML injection
+    setTimeout(() => {
+      const el = document.getElementById('sa-nama');
+      if (el) el.value = row.name !== sku ? row.name : '';
+    }, 0);
   },
 
   async saveStokAwal(sku) {
@@ -314,6 +325,64 @@ const Stok = {
 
     App.closeModal();
     App.toast(`Stok awal SKU ${sku} diset ke ${qty} unit.`, 'success');
+    this._renderRekap();
+  },
+
+  /* ── TAMBAH PRODUK BARU ── */
+  openTambahProduk() {
+    App.openModal({
+      title: 'Tambah Produk Baru',
+      body: `
+        <p class="text-sm text-gray-500 mb-4">Input stok awal untuk produk yang belum tercatat di sistem.</p>
+        <div class="space-y-3">
+          <div>
+            <label class="label">SKU *</label>
+            <input id="tp-sku" class="input" placeholder="Kode SKU produk"/>
+          </div>
+          <div>
+            <label class="label">Nama Produk</label>
+            <input id="tp-nama" class="input" placeholder="Nama produk (opsional)"/>
+          </div>
+          <div>
+            <label class="label">Stok Awal *</label>
+            <input id="tp-qty" type="number" min="0" class="input" value="0" placeholder="0"/>
+          </div>
+          <div>
+            <label class="label">Catatan</label>
+            <input id="tp-notes" class="input" placeholder="Opsional"/>
+          </div>
+        </div>`,
+      footer: `
+        <button onclick="App.closeModal()" class="btn-secondary">Batal</button>
+        <button onclick="Stok.saveTambahProduk()" class="btn-primary">Simpan</button>`,
+    });
+  },
+
+  async saveTambahProduk() {
+    const sku   = document.getElementById('tp-sku').value.trim().toUpperCase();
+    const nama  = document.getElementById('tp-nama').value.trim();
+    const qty   = parseInt(document.getElementById('tp-qty').value);
+    const notes = document.getElementById('tp-notes').value.trim();
+
+    if (!sku) { App.toast('SKU wajib diisi.', 'warning'); return; }
+    if (isNaN(qty) || qty < 0) { App.toast('Stok awal tidak valid.', 'warning'); return; }
+
+    const { error } = await App.db().from('stok_awal').upsert(
+      { sku, product_name: nama || sku, qty, notes, updated_at: new Date().toISOString() },
+      { onConflict: 'sku' }
+    );
+
+    if (error) {
+      if (error.message.includes('does not exist') || error.message.includes('relation')) {
+        App.toast('Tabel stok_awal belum dibuat. Jalankan SQL migrasi v3 di Supabase.', 'warning');
+      } else {
+        App.toast('Gagal simpan: ' + error.message, 'error');
+      }
+      return;
+    }
+
+    App.closeModal();
+    App.toast(`Produk ${sku} ditambahkan dengan stok awal ${qty} unit.`, 'success');
     this._renderRekap();
   },
 
