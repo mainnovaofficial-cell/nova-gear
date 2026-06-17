@@ -157,7 +157,12 @@ const Stok = {
                 <button onclick="Stok.editStokAwal('${m.replace(/'/g, "\\'")}')"
                         class="text-xs text-blue-500 hover:text-blue-700 font-medium whitespace-nowrap block">
                   ${members.length > 1 ? 'Edit ' + m : 'Edit Stok Awal'}
-                </button>`).join('')}
+                </button>
+                ${App.isOwner() ? `
+                <button onclick="Stok.deleteProduk('${m.replace(/'/g, "\\'")}')"
+                        class="text-xs text-red-400 hover:text-red-600 font-medium whitespace-nowrap block mt-0.5">
+                  Hapus${members.length > 1 ? ' ' + m : ''}
+                </button>` : ''}`).join('')}
               </td>
             </tr>`;
           }).join('')}</tbody>
@@ -352,6 +357,16 @@ const Stok = {
 
     App.closeModal();
     App.toast(`Stok awal SKU ${sku} diset ke ${qty} unit.`, 'success');
+    this._renderRekap();
+  },
+
+  async deleteProduk(sku) {
+    if (!App.isOwner()) { App.toast('Hanya Owner yang bisa menghapus data.', 'warning'); return; }
+    const ok = await App.confirm(`Hapus data produk "${sku}" dari Stok? Tindakan ini tidak bisa dibatalkan.`);
+    if (!ok) return;
+    const { error } = await App.db().from('stok_awal').delete().eq('sku', sku);
+    if (error) { App.toast('Gagal hapus: ' + error.message, 'error'); return; }
+    App.toast(`Produk ${sku} dihapus.`, 'success');
     this._renderRekap();
   },
 
