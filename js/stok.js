@@ -62,13 +62,19 @@ const Stok = {
         db.from('stok_awal').select('sku,product_name,qty,parent_sku').then(r => r, () => ({ data: [] })),
       ]);
 
+      // Normalisasi SKU (trim + uppercase) supaya SKU yang sama dari sumber berbeda
+      // (stok_awal, hpp_items, orders, stok_adjust) selalu cocok satu sama lain —
+      // tanpa ini, SKU dengan casing berbeda dianggap produk lain dan tombol Hapus
+      // (yang menghapus berdasarkan SKU persis) tidak akan menemukan baris di stok_awal.
+      const normSku = raw => (raw || 'TANPA-SKU').toString().trim().toUpperCase();
+
       // Resolusi SKU varian → Parent SKU (varian dengan stok fisik sama digabung)
       const parentMap = {};
       this._skuMeta = {};
       (stokAwal || []).forEach(r => {
-        const sku = r.sku || 'TANPA-SKU';
+        const sku = normSku(r.sku);
         this._skuMeta[sku] = { name: r.product_name || sku, awal: +r.qty || 0, parentSku: r.parent_sku || '' };
-        if (r.parent_sku) parentMap[sku] = r.parent_sku.trim().toUpperCase();
+        if (r.parent_sku) parentMap[sku] = normSku(r.parent_sku);
       });
       const groupKey = sku => parentMap[sku] || sku;
 
@@ -82,20 +88,20 @@ const Stok = {
       };
 
       (stokAwal || []).forEach(r => {
-        const sku = r.sku || 'TANPA-SKU';
+        const sku = normSku(r.sku);
         ensure(sku, r.product_name);
         map[groupKey(sku)].awal += +r.qty || 0;
       });
 
       (hppData || []).forEach(r => {
-        const sku = r.sku || 'TANPA-SKU';
+        const sku = normSku(r.sku);
         ensure(sku, r.product_name);
         map[groupKey(sku)].masuk += +r.qty || 0;
       });
 
       const DEDUCT = new Set(['keluar', 'sudah_keluar_tidak_balik', 'menunggu_barang_kembali']);
       (orders || []).forEach(r => {
-        const sku = r.sku || 'TANPA-SKU';
+        const sku = normSku(r.sku);
         ensure(sku, r.product_name);
         // Backward compat: old Selesai orders without stok_action
         const action = r.stok_action || (r.status === 'Selesai' ? 'keluar' : null);
@@ -103,7 +109,7 @@ const Stok = {
       });
 
       (adjusts || []).forEach(r => {
-        const sku = r.sku || 'TANPA-SKU';
+        const sku = normSku(r.sku);
         ensure(sku);
         map[groupKey(sku)].adjust += +r.qty || 0;
       });
@@ -364,9 +370,13 @@ const Stok = {
     if (!App.isOwner()) { App.toast('Hanya Owner yang bisa menghapus data.', 'warning'); return; }
     const ok = await App.confirm(`Hapus data produk "${sku}" dari Stok? Tindakan ini tidak bisa dibatalkan.`);
     if (!ok) return;
-    const { error } = await App.db().from('stok_awal').delete().eq('sku', sku);
+    const { data, error } = await App.db().from('stok_awal').delete().eq('sku', sku).select();
     if (error) { App.toast('Gagal hapus: ' + error.message, 'error'); return; }
-    App.toast(`Produk ${sku} dihapus.`, 'success');
+    if (!data || !data.length) {
+      App.toast(`Tidak ada data Stok Awal untuk SKU ${sku} (produk ini hanya tercatat dari HPP/Pesanan).`, 'warning');
+      return;
+    }
+    App.toast(`Produk ${sku} dihapus dari Stok Awal.`, 'success');
     this._renderRekap();
   },
 
