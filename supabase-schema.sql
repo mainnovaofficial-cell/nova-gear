@@ -258,10 +258,13 @@ create table if not exists stok_awal (
   sku          text unique not null,
   product_name text,
   qty          integer default 0,
+  parent_sku   text,   -- opsional: SKU induk jika varian ini berbagi stok fisik dengan SKU lain
   notes        text,
   updated_at   timestamptz default now(),
   created_at   timestamptz default now()
 );
+
+create index if not exists stok_awal_parent_sku_idx on stok_awal(parent_sku);
 
 -- 4. Tabel stok_adjust (penyesuaian manual — sudah ada di kode lama, buat jika belum)
 create table if not exists stok_adjust (
@@ -323,6 +326,21 @@ where not exists (select 1 from hpp_items it where it.batch_id = h.id)
 
 -- 3. Setelah memastikan data sudah pindah dengan benar, tabel "hpp" lama bisa dihapus:
 -- drop table if exists hpp;
+
+-- ═══════════════════════════════════════════════════════
+--  MIGRASI v5 — Parent SKU (gabung stok varian dengan stok fisik sama)
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- Tambah kolom parent_sku di stok_awal (jika belum ada)
+alter table stok_awal add column if not exists parent_sku text;
+
+create index if not exists stok_awal_parent_sku_idx on stok_awal(parent_sku);
+
+-- Contoh pemakaian: BM-M5-B-F dan BM-M5-B-TF adalah varian berbeda dari produk
+-- yang sama secara fisik. Set parent_sku keduanya ke 'BM-M5-B' supaya stok
+-- (stok awal, masuk HPP, keluar pesanan, penyesuaian) dihitung gabung di halaman Stok:
+-- update stok_awal set parent_sku = 'BM-M5-B' where sku in ('BM-M5-B-F', 'BM-M5-B-TF');
 
 -- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup

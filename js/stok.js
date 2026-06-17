@@ -59,26 +59,38 @@ const Stok = {
         db.from('hpp_items').select('sku,product_name,qty'),
         db.from('orders').select('sku,product_name,qty,stok_action,status'),
         db.from('stok_adjust').select('sku,qty').then(r => r, () => ({ data: [] })),
-        db.from('stok_awal').select('sku,product_name,qty').then(r => r, () => ({ data: [] })),
+        db.from('stok_awal').select('sku,product_name,qty,parent_sku').then(r => r, () => ({ data: [] })),
       ]);
 
-      // SKU map: { sku → { name, awal, masuk, keluar, adjust } }
+      // Resolusi SKU varian → Parent SKU (varian dengan stok fisik sama digabung)
+      const parentMap = {};
+      this._skuMeta = {};
+      (stokAwal || []).forEach(r => {
+        const sku = r.sku || 'TANPA-SKU';
+        this._skuMeta[sku] = { name: r.product_name || sku, awal: +r.qty || 0, parentSku: r.parent_sku || '' };
+        if (r.parent_sku) parentMap[sku] = r.parent_sku.trim().toUpperCase();
+      });
+      const groupKey = sku => parentMap[sku] || sku;
+
+      // Group map: { groupKey → { name, awal, masuk, keluar, adjust, members } }
       const map = {};
       const ensure = (sku, name = '') => {
-        if (!map[sku]) map[sku] = { sku, name: name || sku, awal: 0, masuk: 0, keluar: 0, adjust: 0 };
-        if (name && !map[sku].name || map[sku].name === sku) map[sku].name = name;
+        const key = groupKey(sku);
+        if (!map[key]) map[key] = { sku: key, name: name || key, awal: 0, masuk: 0, keluar: 0, adjust: 0, members: new Set() };
+        map[key].members.add(sku);
+        if (name && map[key].name === key) map[key].name = name;
       };
 
       (stokAwal || []).forEach(r => {
         const sku = r.sku || 'TANPA-SKU';
         ensure(sku, r.product_name);
-        map[sku].awal = +r.qty || 0;
+        map[groupKey(sku)].awal += +r.qty || 0;
       });
 
       (hppData || []).forEach(r => {
         const sku = r.sku || 'TANPA-SKU';
         ensure(sku, r.product_name);
-        map[sku].masuk += +r.qty || 0;
+        map[groupKey(sku)].masuk += +r.qty || 0;
       });
 
       const DEDUCT = new Set(['keluar', 'sudah_keluar_tidak_balik', 'menunggu_barang_kembali']);
@@ -87,18 +99,18 @@ const Stok = {
         ensure(sku, r.product_name);
         // Backward compat: old Selesai orders without stok_action
         const action = r.stok_action || (r.status === 'Selesai' ? 'keluar' : null);
-        if (DEDUCT.has(action)) map[sku].keluar += +r.qty || 0;
+        if (DEDUCT.has(action)) map[groupKey(sku)].keluar += +r.qty || 0;
       });
 
       (adjusts || []).forEach(r => {
         const sku = r.sku || 'TANPA-SKU';
         ensure(sku);
-        map[sku].adjust += +r.qty || 0;
+        map[groupKey(sku)].adjust += +r.qty || 0;
       });
 
       const rows = Object.values(map).sort((a, b) => a.sku.localeCompare(b.sku));
       this._rowData = {};
-      rows.forEach(r => { this._rowData[r.sku] = r; });
+      rows.forEach(r => { r.members.forEach(m => { this._rowData[m] = r; }); });
 
       if (!rows.length) {
         el.innerHTML = `<div class="empty-state card py-16 mt-4">
@@ -127,8 +139,12 @@ const Stok = {
           <tbody>${rows.map(r => {
             const sisa = r.awal + r.masuk - r.keluar + r.adjust;
             const [sc, sl] = sisa <= 0 ? ['badge-red','Habis'] : sisa <= 5 ? ['badge-yellow','Hampir Habis'] : ['badge-green','Tersedia'];
+            const members = [...r.members].sort();
             return `<tr>
-              <td class="font-mono text-xs font-semibold text-gray-600">${r.sku}</td>
+              <td class="font-mono text-xs font-semibold text-gray-600">
+                ${r.sku}
+                ${members.length > 1 ? `<div class="text-[10px] text-gray-400 font-normal mt-0.5">${members.join(', ')}</div>` : ''}
+              </td>
               <td class="font-medium">${r.name}</td>
               <td class="text-right text-gray-500 font-semibold">${App.formatNumber(r.awal)}</td>
               <td class="text-right text-green-700 font-semibold">${App.formatNumber(r.masuk)}</td>
@@ -137,17 +153,19 @@ const Stok = {
               <td class="text-right font-bold text-lg text-money">${App.formatNumber(sisa)}</td>
               <td><span class="badge ${sc}">${sl}</span></td>
               <td>
-                <button onclick="Stok.editStokAwal('${r.sku.replace(/'/g, "\\'")}')"
-                        class="text-xs text-blue-500 hover:text-blue-700 font-medium whitespace-nowrap">
-                  Edit Stok Awal
-                </button>
+                ${members.map(m => `
+                <button onclick="Stok.editStokAwal('${m.replace(/'/g, "\\'")}')"
+                        class="text-xs text-blue-500 hover:text-blue-700 font-medium whitespace-nowrap block">
+                  ${members.length > 1 ? 'Edit ' + m : 'Edit Stok Awal'}
+                </button>`).join('')}
               </td>
             </tr>`;
           }).join('')}</tbody>
         </table>
       </div>
       <p class="text-xs text-gray-400 mt-2 px-1">
-        Sisa = Stok Awal + Masuk (HPP) − Keluar (Pesanan Selesai/Terkirim) + Penyesuaian
+        Sisa = Stok Awal + Masuk (HPP) − Keluar (Pesanan Selesai/Terkirim) + Penyesuaian.
+        Produk dengan Parent SKU yang sama digabung jadi satu baris stok bersama.
       </p>`;
 
     } catch (err) {
@@ -269,7 +287,7 @@ const Stok = {
 
   /* ── EDIT STOK AWAL ── */
   editStokAwal(sku) {
-    const row = this._rowData[sku] || { name: sku, awal: 0 };
+    const meta = (this._skuMeta && this._skuMeta[sku]) || { name: sku, awal: 0, parentSku: '' };
     const escapedSku = sku.replace(/'/g, "\\'");
     App.openModal({
       title: 'Edit Stok Awal',
@@ -285,8 +303,12 @@ const Stok = {
             <input id="sa-nama" class="input" placeholder="Nama produk (opsional)"/>
           </div>
           <div>
+            <label class="label">Parent SKU</label>
+            <input id="sa-parent" class="input" placeholder="Opsional — untuk varian dengan stok fisik sama"/>
+          </div>
+          <div>
             <label class="label">Stok Awal *</label>
-            <input id="sa-qty" type="number" min="0" class="input" value="${row.awal}" placeholder="0"/>
+            <input id="sa-qty" type="number" min="0" class="input" value="${meta.awal}" placeholder="0"/>
           </div>
           <div>
             <label class="label">Catatan</label>
@@ -297,22 +319,25 @@ const Stok = {
         <button onclick="App.closeModal()" class="btn-secondary">Batal</button>
         <button onclick="Stok.saveStokAwal('${escapedSku}')" class="btn-primary">Simpan</button>`,
     });
-    // Set nama after DOM render to avoid HTML injection
+    // Set nama & parent setelah DOM render untuk menghindari HTML injection
     setTimeout(() => {
-      const el = document.getElementById('sa-nama');
-      if (el) el.value = row.name !== sku ? row.name : '';
+      const nameEl = document.getElementById('sa-nama');
+      if (nameEl) nameEl.value = meta.name && meta.name !== sku ? meta.name : '';
+      const parentEl = document.getElementById('sa-parent');
+      if (parentEl) parentEl.value = meta.parentSku || '';
     }, 0);
   },
 
   async saveStokAwal(sku) {
-    const qty   = parseInt(document.getElementById('sa-qty').value);
-    const nama  = document.getElementById('sa-nama').value.trim();
-    const notes = document.getElementById('sa-notes').value.trim();
+    const qty       = parseInt(document.getElementById('sa-qty').value);
+    const nama      = document.getElementById('sa-nama').value.trim();
+    const notes     = document.getElementById('sa-notes').value.trim();
+    const parentSku = document.getElementById('sa-parent').value.trim().toUpperCase();
 
     if (isNaN(qty) || qty < 0) { App.toast('Jumlah stok awal tidak valid.', 'warning'); return; }
 
     const { error } = await App.db().from('stok_awal').upsert(
-      { sku, product_name: nama || sku, qty, notes, updated_at: new Date().toISOString() },
+      { sku, product_name: nama || sku, qty, notes, parent_sku: parentSku || null, updated_at: new Date().toISOString() },
       { onConflict: 'sku' }
     );
 
@@ -346,6 +371,10 @@ const Stok = {
             <input id="tp-nama" class="input" placeholder="Nama produk (opsional)"/>
           </div>
           <div>
+            <label class="label">Parent SKU</label>
+            <input id="tp-parent" class="input" placeholder="Opsional — untuk varian dengan stok fisik sama"/>
+          </div>
+          <div>
             <label class="label">Stok Awal *</label>
             <input id="tp-qty" type="number" min="0" class="input" value="0" placeholder="0"/>
           </div>
@@ -361,16 +390,17 @@ const Stok = {
   },
 
   async saveTambahProduk() {
-    const sku   = document.getElementById('tp-sku').value.trim().toUpperCase();
-    const nama  = document.getElementById('tp-nama').value.trim();
-    const qty   = parseInt(document.getElementById('tp-qty').value);
-    const notes = document.getElementById('tp-notes').value.trim();
+    const sku       = document.getElementById('tp-sku').value.trim().toUpperCase();
+    const nama       = document.getElementById('tp-nama').value.trim();
+    const parentSku  = document.getElementById('tp-parent').value.trim().toUpperCase();
+    const qty        = parseInt(document.getElementById('tp-qty').value);
+    const notes      = document.getElementById('tp-notes').value.trim();
 
     if (!sku) { App.toast('SKU wajib diisi.', 'warning'); return; }
     if (isNaN(qty) || qty < 0) { App.toast('Stok awal tidak valid.', 'warning'); return; }
 
     const { error } = await App.db().from('stok_awal').upsert(
-      { sku, product_name: nama || sku, qty, notes, updated_at: new Date().toISOString() },
+      { sku, product_name: nama || sku, qty, notes, parent_sku: parentSku || null, updated_at: new Date().toISOString() },
       { onConflict: 'sku' }
     );
 
