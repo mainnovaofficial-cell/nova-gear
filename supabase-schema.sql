@@ -259,7 +259,8 @@ create table if not exists stok_awal (
   sku          text unique not null,
   product_name text,
   qty          integer default 0,
-  parent_sku   text,   -- opsional: SKU induk jika varian ini berbagi stok fisik dengan SKU lain
+  parent_sku   text,             -- opsional: SKU induk jika varian ini berbagi stok fisik dengan SKU lain
+  hidden       boolean default false,  -- true = disembunyikan dari Rekap Stok (penjualan/HPP tetap terhitung di Laba Rugi)
   notes        text,
   updated_at   timestamptz default now(),
   created_at   timestamptz default now()
@@ -352,6 +353,20 @@ create index if not exists stok_awal_parent_sku_idx on stok_awal(parent_sku);
 insert into settings (key, value) values
   ('freebie_default_price', '7300')
 on conflict (key) do nothing;
+
+-- ═══════════════════════════════════════════════════════
+--  MIGRASI v7 — Sembunyikan Produk di Rekap Stok
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- Tambah kolom hidden di stok_awal (jika belum ada)
+alter table stok_awal add column if not exists hidden boolean default false;
+
+-- Catatan: SKU yang tidak punya baris di stok_awal sama sekali (hanya
+-- tercatat dari hpp_items/orders) otomatis dianggap tersembunyi di
+-- halaman Stok — ini logika sisi aplikasi, tidak perlu migrasi data.
+-- Data penjualan & HPP produk yang disembunyikan tetap terhitung normal
+-- di Laba Rugi dan Analisis Margin (filter hidden hanya berlaku di Rekap Stok).
 
 -- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup

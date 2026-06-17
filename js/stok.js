@@ -8,6 +8,7 @@
 const Stok = {
   _tab: 'rekap',
   _rowData: {},
+  _showHidden: false,
 
   async onLoad() {
     const el = document.getElementById('page-stok');
@@ -59,7 +60,7 @@ const Stok = {
         db.from('hpp_items').select('sku,product_name,qty'),
         db.from('orders').select('sku,product_name,qty,stok_action,status'),
         db.from('stok_adjust').select('sku,qty').then(r => r, () => ({ data: [] })),
-        db.from('stok_awal').select('sku,product_name,qty,parent_sku').then(r => r, () => ({ data: [] })),
+        db.from('stok_awal').select('sku,product_name,qty,parent_sku,hidden').then(r => r, () => ({ data: [] })),
       ]);
 
       // Normalisasi SKU (trim + uppercase) supaya SKU yang sama dari sumber berbeda
@@ -73,10 +74,13 @@ const Stok = {
       this._skuMeta = {};
       (stokAwal || []).forEach(r => {
         const sku = normSku(r.sku);
-        this._skuMeta[sku] = { name: r.product_name || sku, awal: +r.qty || 0, parentSku: r.parent_sku || '' };
+        this._skuMeta[sku] = { name: r.product_name || sku, awal: +r.qty || 0, parentSku: r.parent_sku || '', hidden: r.hidden === true };
         if (r.parent_sku) parentMap[sku] = normSku(r.parent_sku);
       });
       const groupKey = sku => parentMap[sku] || sku;
+      // SKU yang tidak punya baris stok_awal sama sekali (hanya tercatat dari HPP/Pesanan)
+      // otomatis tersembunyi.
+      const isHidden = sku => this._skuMeta[sku] ? this._skuMeta[sku].hidden : true;
 
       // Group map: { groupKey → { name, awal, masuk, keluar, adjust, members } }
       const map = {};
@@ -115,11 +119,24 @@ const Stok = {
       });
 
       const rows = Object.values(map).sort((a, b) => a.sku.localeCompare(b.sku));
+      // Produk grup dianggap tersembunyi hanya jika SEMUA SKU anggotanya tersembunyi.
+      rows.forEach(r => { r.hidden = [...r.members].every(m => isHidden(m)); });
       this._rowData = {};
       rows.forEach(r => { r.members.forEach(m => { this._rowData[m] = r; }); });
 
-      if (!rows.length) {
-        el.innerHTML = `<div class="empty-state card py-16 mt-4">
+      const visibleRows = this._showHidden ? rows : rows.filter(r => !r.hidden);
+      const hiddenCount = rows.filter(r => r.hidden).length;
+
+      const toggleBar = `
+      <div class="flex items-center justify-between mb-3">
+        <label class="inline-flex items-center gap-2 text-xs text-gray-600">
+          <input type="checkbox" id="stok-show-hidden" ${this._showHidden ? 'checked' : ''} onchange="Stok._toggleShowHidden(this.checked)"/>
+          Tampilkan produk tersembunyi ${hiddenCount ? `(${hiddenCount})` : ''}
+        </label>
+      </div>`;
+
+      if (!visibleRows.length) {
+        el.innerHTML = toggleBar + `<div class="empty-state card py-16 mt-4">
           <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" class="w-12 h-12 text-gray-300 mx-auto mb-3">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
           </svg>
@@ -128,7 +145,7 @@ const Stok = {
         return;
       }
 
-      el.innerHTML = `
+      el.innerHTML = toggleBar + `
       <div class="table-wrapper mt-4">
         <table class="data-table">
           <thead><tr>
@@ -142,13 +159,14 @@ const Stok = {
             <th>Status</th>
             <th></th>
           </tr></thead>
-          <tbody>${rows.map(r => {
+          <tbody>${visibleRows.map(r => {
             const sisa = r.awal + r.masuk - r.keluar + r.adjust;
             const [sc, sl] = sisa <= 0 ? ['badge-red','Habis'] : sisa <= 5 ? ['badge-yellow','Hampir Habis'] : ['badge-green','Tersedia'];
             const members = [...r.members].sort();
-            return `<tr>
+            return `<tr class="${r.hidden ? 'opacity-50' : ''}">
               <td class="font-mono text-xs font-semibold text-gray-600">
                 ${r.sku}
+                ${r.hidden ? `<span class="badge badge-gray text-[10px] ml-1">Tersembunyi</span>` : ''}
                 ${members.length > 1 ? `<div class="text-[10px] text-gray-400 font-normal mt-0.5">${members.join(', ')}</div>` : ''}
               </td>
               <td class="font-medium">${r.name}</td>
@@ -165,6 +183,10 @@ const Stok = {
                   ${members.length > 1 ? 'Edit ' + m : 'Edit Stok Awal'}
                 </button>
                 ${App.isOwner() ? `
+                <button onclick="Stok.toggleHidden('${m.replace(/'/g, "\\'")}', ${!isHidden(m)})"
+                        class="text-xs text-gray-500 hover:text-gray-700 font-medium whitespace-nowrap block mt-0.5">
+                  ${isHidden(m) ? 'Tampilkan' : 'Sembunyikan'}${members.length > 1 ? ' ' + m : ''}
+                </button>
                 <button onclick="Stok.deleteProduk('${m.replace(/'/g, "\\'")}')"
                         class="text-xs text-red-400 hover:text-red-600 font-medium whitespace-nowrap block mt-0.5">
                   Hapus${members.length > 1 ? ' ' + m : ''}
@@ -177,11 +199,17 @@ const Stok = {
       <p class="text-xs text-gray-400 mt-2 px-1">
         Sisa = Stok Awal + Masuk (HPP) − Keluar (Pesanan Selesai/Terkirim) + Penyesuaian.
         Produk dengan Parent SKU yang sama digabung jadi satu baris stok bersama.
+        Produk tersembunyi tidak ditampilkan di sini, tapi data penjualan dan HPP-nya tetap terhitung di Laba Rugi.
       </p>`;
 
     } catch (err) {
       el.innerHTML = `<div class="card mt-4 p-4 text-red-600 text-sm">Error memuat data stok: ${err.message}</div>`;
     }
+  },
+
+  _toggleShowHidden(checked) {
+    this._showHidden = checked;
+    this._renderRekap();
   },
 
   /* ── TAB: HISTORY PERUBAHAN ── */
@@ -377,6 +405,18 @@ const Stok = {
       return;
     }
     App.toast(`Produk ${sku} dihapus dari Stok Awal.`, 'success');
+    this._renderRekap();
+  },
+
+  async toggleHidden(sku, hide) {
+    if (!App.isOwner()) { App.toast('Hanya Owner yang bisa menyembunyikan produk.', 'warning'); return; }
+    const meta = (this._skuMeta && this._skuMeta[sku]) || { name: sku, awal: 0, parentSku: '' };
+    const { error } = await App.db().from('stok_awal').upsert(
+      { sku, product_name: meta.name || sku, qty: meta.awal || 0, parent_sku: meta.parentSku || null, hidden: hide, updated_at: new Date().toISOString() },
+      { onConflict: 'sku' }
+    );
+    if (error) { App.toast('Gagal ubah visibilitas: ' + error.message, 'error'); return; }
+    App.toast(hide ? `Produk ${sku} disembunyikan.` : `Produk ${sku} ditampilkan.`, 'success');
     this._renderRekap();
   },
 
