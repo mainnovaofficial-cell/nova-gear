@@ -19,7 +19,7 @@ const Operasional = {
         </button>
       </div>
     </div>
-    <div id="ops-summary" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5"></div>
+    <div id="ops-summary" class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5"></div>
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <div class="card lg:col-span-2">
         <div class="card-header mb-3">
@@ -52,9 +52,7 @@ const Operasional = {
     const monthTotal = thisMonth.reduce((s,r) => s+(+r.cost||0), 0);
     document.getElementById('ops-summary').innerHTML = `
       <div class="stat-card"><p class="stat-label">Total Operasional</p><p class="stat-value text-money">${App.formatRupiah(total)}</p><p class="stat-sub">semua waktu</p></div>
-      <div class="stat-card"><p class="stat-label">Bulan Ini</p><p class="stat-value text-money">${App.formatRupiah(monthTotal)}</p><p class="stat-sub">${App.todayISO().slice(0,7)}</p></div>
-      <div class="stat-card"><p class="stat-label">Jumlah Entri</p><p class="stat-value">${d.length}</p><p class="stat-sub">total pengeluaran</p></div>
-      <div class="stat-card"><p class="stat-label">Rata-rata per Entri</p><p class="stat-value text-money">${d.length ? App.formatRupiah(total/d.length) : 'Rp 0'}</p><p class="stat-sub">per transaksi</p></div>`;
+      <div class="stat-card"><p class="stat-label">Bulan Ini</p><p class="stat-value text-money">${App.formatRupiah(monthTotal)}</p><p class="stat-sub">${App.todayISO().slice(0,7)}</p></div>`;
   },
 
   _renderTable() {
