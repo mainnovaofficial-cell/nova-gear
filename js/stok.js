@@ -29,7 +29,25 @@ const Stok = {
       <button class="tab-btn"        onclick="Stok._switchTab('history', this)">History Perubahan</button>
     </div>
     <div id="stok-content"><div class="skeleton h-40 w-full rounded-xl mt-4"></div></div>`;
+    if (!this._menuListenerBound) {
+      document.addEventListener('click', () => this._closeAllMenus());
+      this._menuListenerBound = true;
+    }
     await this._render();
+  },
+
+  /* ── Dropdown aksi per baris ── */
+  _toggleMenu(event, id) {
+    event.stopPropagation();
+    const target = document.getElementById(id);
+    if (!target) return;
+    const wasHidden = target.classList.contains('hidden');
+    this._closeAllMenus();
+    if (wasHidden) target.classList.remove('hidden');
+  },
+
+  _closeAllMenus() {
+    document.querySelectorAll('.stok-action-menu').forEach(m => m.classList.add('hidden'));
   },
 
   _switchTab(tab, btn) {
@@ -159,7 +177,7 @@ const Stok = {
             <th>Status</th>
             <th></th>
           </tr></thead>
-          <tbody>${visibleRows.map(r => {
+          <tbody>${visibleRows.map((r, rIdx) => {
             const sisa = r.awal + r.masuk - r.keluar + r.adjust;
             const [sc, sl] = sisa <= 0 ? ['badge-red','Habis'] : sisa <= 5 ? ['badge-yellow','Hampir Habis'] : ['badge-green','Tersedia'];
             const members = [...r.members].sort();
@@ -177,20 +195,24 @@ const Stok = {
               <td class="text-right font-bold text-lg text-money">${App.formatNumber(sisa)}</td>
               <td><span class="badge ${sc}">${sl}</span></td>
               <td>
-                ${members.map(m => `
-                <button onclick="Stok.editStokAwal('${m.replace(/'/g, "\\'")}')"
-                        class="text-xs text-blue-500 hover:text-blue-700 font-medium whitespace-nowrap block">
-                  ${members.length > 1 ? 'Edit ' + m : 'Edit Stok Awal'}
-                </button>
-                ${App.isOwner() ? `
-                <button onclick="Stok.toggleHidden('${m.replace(/'/g, "\\'")}', ${!isHidden(m)})"
-                        class="text-xs text-gray-500 hover:text-gray-700 font-medium whitespace-nowrap block mt-0.5">
-                  ${isHidden(m) ? 'Tampilkan' : 'Sembunyikan'}${members.length > 1 ? ' ' + m : ''}
-                </button>
-                <button onclick="Stok.deleteProduk('${m.replace(/'/g, "\\'")}')"
-                        class="text-xs text-red-400 hover:text-red-600 font-medium whitespace-nowrap block mt-0.5">
-                  Hapus${members.length > 1 ? ' ' + m : ''}
-                </button>` : ''}`).join('')}
+                ${members.map((m, mIdx) => {
+                  const esc   = m.replace(/'/g, "\\'");
+                  const menuId = `stok-menu-${rIdx}-${mIdx}`;
+                  return `
+                <div class="relative inline-block ${members.length > 1 ? 'block mb-1' : ''}">
+                  <button onclick="Stok._toggleMenu(event, '${menuId}')"
+                          class="text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded px-2 py-0.5 text-sm font-bold leading-none"
+                          title="${members.length > 1 ? 'Aksi ' + m : 'Aksi'}">
+                    ⋮${members.length > 1 ? `<span class="text-[10px] text-gray-400 font-normal ml-1">${m}</span>` : ''}
+                  </button>
+                  <div id="${menuId}" class="stok-action-menu hidden absolute right-0 mt-1 w-44 bg-white border border-gray-100 rounded-lg shadow-lg z-20 py-1 text-xs">
+                    <button onclick="Stok.editStokAwal('${esc}')" class="block w-full text-left px-3 py-1.5 hover:bg-gray-50 text-blue-600">Edit Stok Awal</button>
+                    ${App.isOwner() ? `
+                    <button onclick="Stok.toggleHidden('${esc}', ${!isHidden(m)})" class="block w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-600">${isHidden(m) ? 'Tampilkan' : 'Sembunyikan'}</button>
+                    <button onclick="Stok.deleteProduk('${esc}')" class="block w-full text-left px-3 py-1.5 hover:bg-gray-50 text-red-500">Hapus</button>` : ''}
+                  </div>
+                </div>`;
+                }).join('')}
               </td>
             </tr>`;
           }).join('')}</tbody>
