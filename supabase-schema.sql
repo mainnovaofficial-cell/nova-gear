@@ -174,6 +174,7 @@ insert into settings (key, value) values
   ('shopee_affiliate_pct',      '5.0'),
   ('modal_awal',                '0'),
   ('yuan_rate',                 '2200'),
+  ('freebie_default_price',     '7300'),
   ('default_expedition',        'JNE'),
   ('owner_password',            'owner123'),
   ('admin_password',            'admin123')
@@ -341,6 +342,16 @@ create index if not exists stok_awal_parent_sku_idx on stok_awal(parent_sku);
 -- yang sama secara fisik. Set parent_sku keduanya ke 'BM-M5-B' supaya stok
 -- (stok awal, masuk HPP, keluar pesanan, penyesuaian) dihitung gabung di halaman Stok:
 -- update stok_awal set parent_sku = 'BM-M5-B' where sku in ('BM-M5-B-F', 'BM-M5-B-TF');
+
+-- ═══════════════════════════════════════════════════════
+--  MIGRASI v6 — Harga Freebie Default (SKU berakhiran "-F")
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- Tambah setting harga freebie default (dipakai di HPP, Laba Rugi, Analisis Margin)
+insert into settings (key, value) values
+  ('freebie_default_price', '7300')
+on conflict (key) do nothing;
 
 -- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup

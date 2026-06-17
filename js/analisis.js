@@ -27,10 +27,12 @@ const Analisis = {
 
   async _load() {
     const db = App.db();
-    const [{ data: orders }, { data: hpp }] = await Promise.all([
+    const [{ data: orders }, { data: hpp }, settings] = await Promise.all([
       db.from('orders').select('sku,product_name,qty,selling_price,gross_revenue,net_revenue,status'),
       db.from('hpp_items').select('sku,product_name,cost_per_unit,qty'),
+      App.getSettings(),
     ]);
+    const freebieDefault = App.getFreebieDefaultPrice(settings);
 
     // Build per-SKU map from completed orders
     const skuMap = {};
@@ -52,7 +54,7 @@ const Analisis = {
 
     this._products = Object.values(skuMap).map(p => {
       const avgPrice = p.prices.length ? p.prices.reduce((s,v)=>s+v,0)/p.prices.length : (p.gross/Math.max(p.sold,1));
-      const hpp      = hppMap[p.sku] || hppMap[p.name] || 0;
+      const hpp      = (hppMap[p.sku] || hppMap[p.name] || 0) + (App.isFreebieSku(p.sku) ? freebieDefault : 0);
       const netPerUnit = p.sold > 0 ? p.net / p.sold : 0;
       const marginRp   = netPerUnit - hpp;
       const marginPct  = hpp > 0 ? (marginRp / hpp * 100) : (netPerUnit > 0 ? 100 : 0);

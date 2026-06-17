@@ -89,6 +89,16 @@ const Pengaturan = {
         <button onclick="Pengaturan.saveGroup(['yuan_rate'])" class="btn-primary text-xs mt-4">Simpan</button>
       </div>
 
+      <!-- Harga Freebie Default -->
+      <div class="card">
+        <h3 class="card-title mb-4">Harga Freebie Default</h3>
+        <div><label class="label">Harga Freebie Default (Rp)</label>
+          <input id="s-freebie-price" type="number" class="input" value="${s.freebie_default_price||7300}" step="100" min="0"/>
+        </div>
+        <p class="text-xs text-gray-400 mt-2">Dipakai otomatis untuk SKU yang berakhiran "-F" di form HPP, Laba Rugi, dan Analisis Margin.</p>
+        <button onclick="Pengaturan.saveGroup(['freebie_default_price'])" class="btn-primary text-xs mt-4">Simpan</button>
+      </div>
+
       <!-- Password Owner -->
       <div class="card">
         <h3 class="card-title mb-4">Keamanan & Password</h3>
@@ -178,6 +188,7 @@ const Pengaturan = {
       shopee_affiliate_pct:       's-affiliate',
       yuan_rate:                  's-yuan-rate',
       modal_awal:                 's-modal-awal',
+      freebie_default_price:      's-freebie-price',
     };
 
     const updates = keys.map(k => ({

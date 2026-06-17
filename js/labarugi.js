@@ -71,7 +71,13 @@ const LabaRugi = {
       const totalPot   = potKomisi + potLayanan + potIklan + potLain;
       const netRev     = sum(selesai, 'net_revenue') || (omzet - totalPot);
 
-      const totalHPP   = sum(hpp, 'total_cost');
+      // HPP per unit = HPP dari hpp_items + freebie (kalau SKU pesanan berakhiran "-F")
+      const freebieDefault = App.getFreebieDefaultPrice(settings);
+      const purchaseHPP    = sum(hpp, 'total_cost');
+      const totalFreebie   = selesai
+        .filter(o => App.isFreebieSku(o.sku))
+        .reduce((s,o) => s + (+o.qty || 1) * freebieDefault, 0);
+      const totalHPP   = purchaseHPP + totalFreebie;
       const labaKotor  = netRev - totalHPP;
 
       const totalAds   = sum(ads, 'cost');
@@ -111,8 +117,12 @@ const LabaRugi = {
 
           <!-- HPP -->
           ${this._section('HARGA POKOK PENJUALAN', [
-            { label: 'Total HPP / Modal Barang', value: -totalHPP, main: true },
+            { label: 'Modal Barang (Pembelian)', value: -purchaseHPP, main: true },
           ])}
+          ${this._subsection('Tambahan Biaya', [
+            { label: 'Freebie (SKU berakhiran "-F")', value: -totalFreebie },
+          ])}
+          ${this._total('Total HPP', -totalHPP, 'text-red-600')}
           ${this._total('Laba Kotor', labaKotor, labaKotor >= 0 ? 'text-green-700' : 'text-red-600')}
 
           <!-- BEBAN -->

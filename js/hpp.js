@@ -157,7 +157,7 @@ const HPP = {
         <button type="button" onclick="HPP._removeRow(${id})" class="text-gray-300 hover:text-red-500 text-xs">Hapus</button>
       </div>
       <div class="grid grid-cols-2 gap-3">
-        <div><label class="label">SKU</label><input id="h-sku-${id}" class="input" placeholder="Kode SKU"/></div>
+        <div><label class="label">SKU</label><input id="h-sku-${id}" class="input" placeholder="Kode SKU" oninput="HPP._onSkuInput(${id})"/></div>
         <div><label class="label">Nama Produk *</label><input id="h-name-${id}" class="input" placeholder="Nama produk"/></div>
         <div><label class="label">QTY *</label><input id="h-qty-${id}" type="number" min="1" value="1" class="input" oninput="HPP._calcRow(${id})"/></div>
         <div><label class="label"><span id="h-price-label-${id}">Harga per Unit</span></label><input id="h-price-${id}" type="number" step="0.01" class="input" placeholder="0" oninput="HPP._calcRow(${id})"/></div>
@@ -204,6 +204,24 @@ const HPP = {
   _toggleFreebie(id) {
     const box = document.getElementById(`h-freebie-box-${id}`);
     if (box) box.classList.toggle('hidden');
+    this._calcRow(id);
+  },
+
+  _onSkuInput(id) {
+    const sku = document.getElementById(`h-sku-${id}`)?.value || '';
+    if (App.isFreebieSku(sku)) {
+      const toggle = document.getElementById(`h-freebie-toggle-${id}`);
+      if (toggle && !toggle.checked) {
+        toggle.checked = true;
+        document.getElementById(`h-freebie-box-${id}`)?.classList.remove('hidden');
+        const sourceSel = document.getElementById(`h-freebie-source-${id}`);
+        if (sourceSel) sourceSel.value = 'indonesia';
+      }
+      const priceEl = document.getElementById(`h-freebie-price-${id}`);
+      if (priceEl && !priceEl.value) {
+        priceEl.value = App.getFreebieDefaultPrice(AppState.settings);
+      }
+    }
     this._calcRow(id);
   },
 

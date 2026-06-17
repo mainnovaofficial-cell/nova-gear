@@ -426,6 +426,15 @@ const App = {
     return AppState.settings;
   },
 
+  /* ── Freebie (SKU berakhiran "-F") ── */
+  isFreebieSku(sku) {
+    return !!(sku && sku.trim().toUpperCase().endsWith('-F'));
+  },
+
+  getFreebieDefaultPrice(settings) {
+    return +(settings || AppState.settings || {}).freebie_default_price || 7300;
+  },
+
   /* ── Utilities ── */
   formatRupiah(value, withPrefix = true) {
     const num = Number(value) || 0;
