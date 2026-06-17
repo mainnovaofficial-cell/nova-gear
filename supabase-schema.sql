@@ -83,7 +83,7 @@ create table if not exists hpp_items (
   product_name        text not null,
   qty                 integer not null default 1,
   price_unit          numeric(14,4) default 0,   -- harga per unit, dalam mata uang sumber batch
-  shipping_unit       numeric(14,4) default 0,   -- ongkir per unit, dalam mata uang sumber batch
+  shipping_unit       numeric(14,4) default 0,   -- ongkir per unit, selalu dalam Rupiah (IDR)
   freebie_name        text,
   freebie_source      text,                       -- 'china' | 'indonesia', null jika tidak ada freebie
   freebie_price_unit  numeric(14,4) default 0,    -- harga freebie per unit, dalam mata uang sumber freebie

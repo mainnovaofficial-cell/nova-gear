@@ -219,7 +219,7 @@ const HPP = {
   },
 
   _computeRow({ source, rate, qty, price, ship, freebieOn, freebieSource, freebiePrice }) {
-    const base = source === 'china' ? (price + ship) * rate : (price + ship);
+    const base = source === 'china' ? (price * rate) + ship : (price + ship);
     let freebieCost = 0;
     if (freebieOn) {
       freebieCost = freebieSource === 'china' ? freebiePrice * rate : freebiePrice;
@@ -239,7 +239,7 @@ const HPP = {
     const priceLabel = document.getElementById(`h-price-label-${id}`);
     const shipLabel   = document.getElementById(`h-ship-label-${id}`);
     if (priceLabel) priceLabel.textContent = source === 'china' ? 'Harga per Unit (¥ Yuan)' : 'Harga per Unit (Rp)';
-    if (shipLabel)  shipLabel.textContent  = source === 'china' ? 'Ongkir per Unit (¥ Yuan)' : 'Ongkir per Unit (Rp)';
+    if (shipLabel)  shipLabel.textContent  = 'Ongkir per Unit (Rp)';
 
     const freebieOn     = !!document.getElementById(`h-freebie-toggle-${id}`)?.checked;
     const freebieSource = document.getElementById(`h-freebie-source-${id}`)?.value || 'china';
