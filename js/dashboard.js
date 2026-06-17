@@ -27,7 +27,7 @@ const Dashboard = {
       { data: scanToday, error: e5 },
     ] = await Promise.all([
       db.from('orders').select('status,gross_revenue,net_revenue,shopee_commission,shopee_service_fee,shopee_ads_fee,shopee_other_fee,order_date,expedition,created_at'),
-      db.from('hpp').select('total_cost'),
+      db.from('hpp_items').select('total_cost'),
       db.from('ads').select('cost'),
       db.from('operational').select('cost'),
       db.from('scan_logs').select('id,expedition,is_cancelled,scan_date').eq('scan_date', App.todayISO()),

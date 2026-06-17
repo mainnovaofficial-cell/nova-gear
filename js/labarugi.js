@@ -34,7 +34,7 @@ const LabaRugi = {
       const modalAwal = parseFloat(settings.modal_awal || 0);
 
       let ordersQ = db.from('orders').select('status,gross_revenue,net_revenue,shopee_commission,shopee_service_fee,shopee_ads_fee,shopee_other_fee,qty,sku');
-      let hppQ    = db.from('hpp').select('total_cost,purchase_date');
+      let hppQ    = db.from('hpp_batches').select('purchase_date,hpp_items(total_cost)');
       let adsQ    = db.from('ads').select('cost,ad_date');
       let opQ     = db.from('operational').select('cost,op_date');
 
@@ -51,7 +51,9 @@ const LabaRugi = {
         opQ     = opQ.lte('op_date', to);
       }
 
-      const [{ data: orders }, { data: hpp }, { data: ads }, { data: ops }] = await Promise.all([ordersQ, hppQ, adsQ, opQ]);
+      const [{ data: orders }, { data: hppBatches }, { data: ads }, { data: ops }] = await Promise.all([ordersQ, hppQ, adsQ, opQ]);
+
+      const hpp = (hppBatches || []).flatMap(b => b.hpp_items || []);
 
       const sum = (arr, key) => (arr||[]).reduce((s,r) => s+(+r[key]||0), 0);
 

@@ -61,25 +61,38 @@ create table if not exists scan_logs (
 create index if not exists scan_logs_date_idx     on scan_logs(scan_date);
 create index if not exists scan_logs_order_no_idx on scan_logs(order_no);
 
--- ── HPP (Harga Pokok Pembelian / Cost of Goods)
-create table if not exists hpp (
-  id                uuid primary key default gen_random_uuid(),
-  sku               text,
-  product_name      text,
-  qty               integer,
-  price_yuan        numeric(14,4) default 0,
-  yuan_rate         numeric(10,2) default 2200,
-  price_idr         numeric(14,2) default 0,
-  shipping_china    numeric(14,2) default 0,
-  shipping_per_unit numeric(14,2) default 0,
-  other_cost        numeric(14,2) default 0,
-  total_cost        numeric(14,2) default 0,
-  cost_per_unit     numeric(14,2) default 0,
-  purchase_date     date,
-  batch_no          text,
-  notes             text,
-  created_at        timestamptz default now()
+-- ── HPP (Harga Pokok Pembelian / Cost of Goods) — per batch pengiriman
+-- 1 batch = 1 pengiriman dari supplier, bisa berisi banyak produk
+create table if not exists hpp_batches (
+  id             uuid primary key default gen_random_uuid(),
+  purchase_date  date not null,
+  batch_no       text,
+  source         text not null default 'china',   -- 'china' | 'indonesia'
+  yuan_rate      numeric(10,2) default 2200,        -- kurs dipakai untuk item/freebie dari China
+  notes          text,
+  created_at     timestamptz default now()
 );
+
+create index if not exists hpp_batches_date_idx on hpp_batches(purchase_date);
+
+-- ── HPP items — tiap produk dalam 1 batch (+ freebie opsional)
+create table if not exists hpp_items (
+  id                  uuid primary key default gen_random_uuid(),
+  batch_id            uuid references hpp_batches(id) on delete cascade,
+  sku                 text,
+  product_name        text not null,
+  qty                 integer not null default 1,
+  price_unit          numeric(14,4) default 0,   -- harga per unit, dalam mata uang sumber batch
+  shipping_unit       numeric(14,4) default 0,   -- ongkir per unit, dalam mata uang sumber batch
+  freebie_name        text,
+  freebie_source      text,                       -- 'china' | 'indonesia', null jika tidak ada freebie
+  freebie_price_unit  numeric(14,4) default 0,    -- harga freebie per unit, dalam mata uang sumber freebie
+  cost_per_unit       numeric(14,2) default 0,    -- HPP per unit, sudah dikonversi ke IDR
+  total_cost          numeric(14,2) default 0,    -- cost_per_unit * qty
+  created_at          timestamptz default now()
+);
+
+create index if not exists hpp_items_batch_idx on hpp_items(batch_id);
 
 -- ── Ads & Marketing (biaya iklan)
 create table if not exists ads (
@@ -260,23 +273,77 @@ create table if not exists stok_adjust (
 );
 
 -- ═══════════════════════════════════════════════════════
+--  MIGRASI v4 — HPP per Batch (Sumber China/Indonesia + Freebie)
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- 1. Buat tabel batch & item baru (jika belum ada — lihat definisi di atas)
+create table if not exists hpp_batches (
+  id             uuid primary key default gen_random_uuid(),
+  purchase_date  date not null,
+  batch_no       text,
+  source         text not null default 'china',
+  yuan_rate      numeric(10,2) default 2200,
+  notes          text,
+  created_at     timestamptz default now()
+);
+
+create table if not exists hpp_items (
+  id                  uuid primary key default gen_random_uuid(),
+  batch_id            uuid references hpp_batches(id) on delete cascade,
+  sku                 text,
+  product_name        text not null,
+  qty                 integer not null default 1,
+  price_unit          numeric(14,4) default 0,
+  shipping_unit       numeric(14,4) default 0,
+  freebie_name        text,
+  freebie_source      text,
+  freebie_price_unit  numeric(14,4) default 0,
+  cost_per_unit       numeric(14,2) default 0,
+  total_cost          numeric(14,2) default 0,
+  created_at          timestamptz default now()
+);
+
+create index if not exists hpp_batches_date_idx on hpp_batches(purchase_date);
+create index if not exists hpp_items_batch_idx  on hpp_items(batch_id);
+
+-- 2. Migrasi data lama dari tabel "hpp" (1 baris lama = 1 batch + 1 item)
+--    Aman dijalankan berkali-kali: skip baris yang sudah pernah dimigrasi via notes marker.
+insert into hpp_batches (id, purchase_date, batch_no, source, yuan_rate, notes, created_at)
+select h.id, h.purchase_date, h.batch_no, 'china', h.yuan_rate, h.notes, h.created_at
+from hpp h
+where not exists (select 1 from hpp_batches b where b.id = h.id)
+  and exists (select 1 from information_schema.tables where table_name = 'hpp');
+
+insert into hpp_items (batch_id, sku, product_name, qty, price_unit, shipping_unit, cost_per_unit, total_cost, created_at)
+select h.id, h.sku, h.product_name, h.qty, h.price_yuan, h.shipping_per_unit, h.cost_per_unit, h.total_cost, h.created_at
+from hpp h
+where not exists (select 1 from hpp_items it where it.batch_id = h.id)
+  and exists (select 1 from information_schema.tables where table_name = 'hpp');
+
+-- 3. Setelah memastikan data sudah pindah dengan benar, tabel "hpp" lama bisa dihapus:
+-- drop table if exists hpp;
+
+-- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup
 --  Untuk production, gunakan Supabase Auth + RLS policies.
 --  Untuk sementara (anon key): disable RLS di table settings.
 -- ═══════════════════════════════════════════════════════
 
 -- Aktifkan RLS (opsional — nonaktifkan jika pakai anon key saja)
--- alter table orders     enable row level security;
--- alter table scan_logs  enable row level security;
--- alter table hpp        enable row level security;
--- alter table ads        enable row level security;
+-- alter table orders      enable row level security;
+-- alter table scan_logs   enable row level security;
+-- alter table hpp_batches enable row level security;
+-- alter table hpp_items   enable row level security;
+-- alter table ads         enable row level security;
 -- alter table operational enable row level security;
--- alter table settings   enable row level security;
+-- alter table settings    enable row level security;
 
 -- Policy allow all untuk anon (development — ganti untuk production)
 -- create policy "allow_all" on orders      for all using (true) with check (true);
 -- create policy "allow_all" on scan_logs   for all using (true) with check (true);
--- create policy "allow_all" on hpp         for all using (true) with check (true);
+-- create policy "allow_all" on hpp_batches for all using (true) with check (true);
+-- create policy "allow_all" on hpp_items   for all using (true) with check (true);
 -- create policy "allow_all" on ads         for all using (true) with check (true);
 -- create policy "allow_all" on operational for all using (true) with check (true);
 -- create policy "allow_all" on settings    for all using (true) with check (true);

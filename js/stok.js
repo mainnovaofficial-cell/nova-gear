@@ -56,7 +56,7 @@ const Stok = {
         { data: adjusts  },
         { data: stokAwal },
       ] = await Promise.all([
-        db.from('hpp').select('sku,product_name,qty'),
+        db.from('hpp_items').select('sku,product_name,qty'),
         db.from('orders').select('sku,product_name,qty,stok_action,status'),
         db.from('stok_adjust').select('sku,qty').then(r => r, () => ({ data: [] })),
         db.from('stok_awal').select('sku,product_name,qty').then(r => r, () => ({ data: [] })),
@@ -163,11 +163,11 @@ const Stok = {
     try {
       const db = App.db();
       const [
-        { data: hppData  },
+        { data: hppBatches },
         { data: orders   },
         { data: adjusts  },
       ] = await Promise.all([
-        db.from('hpp').select('sku,product_name,qty,purchase_date,batch_no,notes').order('purchase_date', { ascending: false }),
+        db.from('hpp_batches').select('purchase_date,batch_no,notes,hpp_items(sku,product_name,qty)').order('purchase_date', { ascending: false }),
         db.from('orders').select('sku,product_name,qty,stok_action,status,order_date,order_no,cancel_reason').order('order_date', { ascending: false }),
         db.from('stok_adjust').select('sku,qty,notes,created_at').order('created_at', { ascending: false }).then(r => r, () => ({ data: [] })),
       ]);
@@ -176,15 +176,17 @@ const Stok = {
 
       const events = [];
 
-      (hppData || []).forEach(r => {
-        events.push({
-          tanggal: r.purchase_date || '',
-          sku: r.sku || 'TANPA-SKU',
-          nama: r.product_name || r.sku || '-',
-          masuk: +r.qty || 0,
-          keluar: 0,
-          tipe: 'masuk_hpp',
-          keterangan: `Pembelian HPP${r.batch_no ? ` (${r.batch_no})` : ''}${r.notes ? ' — ' + r.notes : ''}`,
+      (hppBatches || []).forEach(b => {
+        (b.hpp_items || []).forEach(r => {
+          events.push({
+            tanggal: b.purchase_date || '',
+            sku: r.sku || 'TANPA-SKU',
+            nama: r.product_name || r.sku || '-',
+            masuk: +r.qty || 0,
+            keluar: 0,
+            tipe: 'masuk_hpp',
+            keterangan: `Pembelian HPP${b.batch_no ? ` (${b.batch_no})` : ''}${b.notes ? ' — ' + b.notes : ''}`,
+          });
         });
       });
 

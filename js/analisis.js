@@ -29,7 +29,7 @@ const Analisis = {
     const db = App.db();
     const [{ data: orders }, { data: hpp }] = await Promise.all([
       db.from('orders').select('sku,product_name,qty,selling_price,gross_revenue,net_revenue,status'),
-      db.from('hpp').select('sku,product_name,cost_per_unit,qty'),
+      db.from('hpp_items').select('sku,product_name,cost_per_unit,qty'),
     ]);
 
     // Build per-SKU map from completed orders
