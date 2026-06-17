@@ -23,7 +23,7 @@ const HPP = {
       </div>
     </div>
     <!-- Summary cards -->
-    <div id="hpp-summary" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5"></div>
+    <div id="hpp-summary" class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5"></div>
     <!-- Table -->
     <div class="card">
       <div class="card-header mb-3">
@@ -51,12 +51,10 @@ const HPP = {
     const totalBatch = this._data.length;
     const totalUnit  = items.reduce((s,it) => s + (+it.qty||0), 0);
     const totalCost  = items.reduce((s,it) => s + (+it.total_cost||0), 0);
-    const avgPerUnit = totalUnit > 0 ? totalCost / totalUnit : 0;
     const cards = [
       ['Total Batch', App.formatNumber(totalBatch), 'pengiriman'],
       ['Total Unit Beli', App.formatNumber(totalUnit), 'unit'],
       ['Total HPP', App.formatRupiah(totalCost), 'biaya keseluruhan'],
-      ['Rata-rata HPP/Unit', App.formatRupiah(avgPerUnit), 'semua produk'],
     ];
     document.getElementById('hpp-summary').innerHTML = cards.map(([t,v,s]) => `
       <div class="stat-card"><p class="stat-label">${t}</p><p class="stat-value text-money">${v}</p><p class="stat-sub">${s}</p></div>`).join('');
