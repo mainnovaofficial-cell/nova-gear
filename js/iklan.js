@@ -18,7 +18,7 @@ const Iklan = {
         </button>
       </div>
     </div>
-    <div id="iklan-summary" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5"></div>
+    <div id="iklan-summary" class="grid grid-cols-1 sm:max-w-xs gap-3 mb-5"></div>
     <div class="card">
       <div class="card-header mb-3">
         <span class="card-title">Riwayat Iklan</span>
@@ -40,19 +40,9 @@ const Iklan = {
   _renderSummary() {
     const d = this._data;
     const totalCost = d.reduce((s,r) => s+(+r.cost||0), 0);
-    const platformMap = {};
-    d.forEach(r => { platformMap[r.platform] = (platformMap[r.platform]||0) + (+r.cost||0); });
-    const topPlatform = Object.entries(platformMap).sort((a,b)=>b[1]-a[1])[0];
 
     document.getElementById('iklan-summary').innerHTML = `
-      <div class="stat-card"><p class="stat-label">Total Biaya Iklan</p><p class="stat-value text-money">${App.formatRupiah(totalCost)}</p><p class="stat-sub">semua platform</p></div>
-      <div class="stat-card"><p class="stat-label">Jumlah Kampanye</p><p class="stat-value">${d.length}</p><p class="stat-sub">entri tercatat</p></div>
-      <div class="stat-card"><p class="stat-label">Platform Terbesar</p><p class="stat-value text-sm font-bold">${topPlatform?topPlatform[0]:'-'}</p><p class="stat-sub">${topPlatform?App.formatRupiah(topPlatform[1]):''}</p></div>
-      <div class="stat-card"><p class="label">Rekap per Platform</p>
-        <div class="mt-1 space-y-0.5">
-          ${Object.entries(platformMap).map(([p,c])=>`<div class="flex justify-between text-xs"><span class="text-gray-500">${p}</span><span class="font-semibold text-money">${App.formatRupiah(c)}</span></div>`).join('')||'<p class="text-gray-300 text-xs">-</p>'}
-        </div>
-      </div>`;
+      <div class="stat-card"><p class="stat-label">Total Biaya Iklan</p><p class="stat-value text-money">${App.formatRupiah(totalCost)}</p><p class="stat-sub">semua platform</p></div>`;
   },
 
   _renderTable() {
@@ -106,10 +96,7 @@ const Iklan = {
           </select>
         </div>
         <div class="col-span-2"><label class="label">Nama Kampanye</label><input id="ik-campaign" class="input" placeholder="Opsional"/></div>
-        <div><label class="label">Biaya (Rp) *</label><input id="ik-cost" type="number" class="input" placeholder="0"/></div>
-        <div><label class="label">Impresi</label><input id="ik-imp" type="number" class="input" placeholder="0"/></div>
-        <div><label class="label">Klik</label><input id="ik-click" type="number" class="input" placeholder="0"/></div>
-        <div><label class="label">Jumlah Order dari Iklan</label><input id="ik-orders" type="number" class="input" placeholder="0"/></div>
+        <div class="col-span-2"><label class="label">Biaya (Rp) *</label><input id="ik-cost" type="number" class="input" placeholder="0"/></div>
         <div class="col-span-2"><label class="label">Catatan</label><input id="ik-notes" class="input" placeholder="Opsional"/></div>
       </div>`,
       footer: `<button onclick="App.closeModal()" class="btn-secondary">Batal</button>
@@ -125,9 +112,6 @@ const Iklan = {
       platform:      document.getElementById('ik-platform').value,
       campaign_name: document.getElementById('ik-campaign').value.trim() || null,
       cost,
-      impressions:   +document.getElementById('ik-imp').value    || 0,
-      clicks:        +document.getElementById('ik-click').value   || 0,
-      orders_count:  +document.getElementById('ik-orders').value  || 0,
       notes:         document.getElementById('ik-notes').value.trim() || null,
     };
     const { error } = await App.db().from('ads').insert(payload);
