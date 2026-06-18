@@ -39,7 +39,8 @@ const Dashboard = {
 
     const today     = App.todayISO();
     const all       = orders || [];
-    const selesai   = all.filter(o => o.status === 'Selesai');
+    // "Berhasil" = Selesai ATAU Dibayar (Dibayar diset oleh Import Income untuk pesanan Selesai yang dananya sudah dirilis)
+    const selesai   = all.filter(o => o.status === 'Selesai' || o.status === 'Dibayar');
     const batal     = all.filter(o => o.status === 'Batal');
     const gagal     = all.filter(o => o.status === 'Gagal Kirim');
     const retur     = all.filter(o => o.status === 'Dikembalikan');
@@ -243,7 +244,7 @@ const Dashboard = {
     this._charts.status = new Chart(ctx, {
       type: 'doughnut',
       data: {
-        labels: ['Selesai', 'Dibatalkan', 'Gagal', 'Retur'],
+        labels: ['Berhasil', 'Dibatalkan', 'Gagal', 'Retur'],
         datasets: [{ data: [selesai, batal, gagal, retur], backgroundColor: ['#22c55e','#9ca3af','#ef4444','#f97316'], borderWidth: 0 }],
       },
       options: {
