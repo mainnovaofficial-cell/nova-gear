@@ -1161,6 +1161,7 @@ const Penjualan = {
         const colGross     = findColIdx('harga asli produk');
         const colDiscount  = findColIdx('total diskon produk', 'diskon produk');
         const colVoucher   = findColIdx('voucher disponsori penjual', 'voucher ditanggung penjual', 'voucher penjual', 'seller voucher');
+        const colNet       = findColIdx('total penghasilan', 'total income', 'net income');
 
         for (let i = 6; i < rows.length; i++) { // data mulai baris 7 (index 6)
           const row = rows[i];
@@ -1170,13 +1171,17 @@ const Penjualan = {
           const gross   = colGross    !== -1 ? this._toNum(row[colGross])    : 0;
           const disc    = colDiscount !== -1 ? this._toNum(row[colDiscount]) : 0;
           const voucher = colVoucher  !== -1 ? this._toNum(row[colVoucher])  : 0;
+          // Net Diterima sebenarnya = kolom "Total Penghasilan" Shopee (sudah final
+          // setelah semua potongan), bukan dihitung manual dari gross+diskon+voucher
+          // (data Shopee bisa punya komponen potongan lain di luar diskon/voucher).
+          const net = colNet !== -1 ? this._toNum(row[colNet]) : (gross + disc + voucher);
           releases.push({
             order_no:       orderNo,
             release_date:   colRelease !== -1 ? this._toDate(row[colRelease]) : null,
             gross_amount:   gross,
             discount:       disc,
             voucher_seller: voucher,
-            net_amount:     gross + disc + voucher,
+            net_amount:     net,
           });
         }
       }
