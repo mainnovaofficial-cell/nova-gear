@@ -1178,20 +1178,45 @@ const Penjualan = {
         }
         releasesSaved = releases.length;
 
-        // Update status pesanan: Selesai → Dibayar untuk order_no yang ada di file Income
-        const orderNos = [...new Set(releases.map(r => r.order_no))];
-        const UPDATE_BATCH = 100;
+        // Update status pesanan: Selesai → Dibayar untuk order_no yang ada di file Income.
+        // Pencocokan exact-match SQL (.eq/.in) rentan gagal kalau order_no di tabel orders
+        // punya spasi tersisa atau beda kapitalisasi dibanding yang diekstrak dari file Income
+        // (mis. "240115ABCD1 " vs "240115abcd1"). Maka pencocokan dinormalisasi di JS dulu
+        // (hapus semua whitespace + uppercase) sebelum diupdate berdasarkan id.
+        const normOrderNo = s => String(s || '').replace(/\s+/g, '').toUpperCase();
+        const releaseNoSet = new Set(releases.map(r => normOrderNo(r.order_no)));
+
+        prog.textContent = 'Mengambil data pesanan Selesai...';
+        const FETCH_PAGE = 1000;
+        let allSelesai = [];
+        let from = 0;
+        while (true) {
+          const { data, error: fetchErr } = await App.db()
+            .from('orders')
+            .select('id, order_no')
+            .eq('status', 'Selesai')
+            .not('order_no', 'is', null)
+            .range(from, from + FETCH_PAGE - 1);
+          if (fetchErr) throw new Error(`Gagal mengambil data pesanan: ${fetchErr.message}`);
+          allSelesai.push(...(data || []));
+          if (!data || data.length < FETCH_PAGE) break;
+          from += FETCH_PAGE;
+        }
+
+        const matchedIds = allSelesai
+          .filter(o => releaseNoSet.has(normOrderNo(o.order_no)))
+          .map(o => o.id);
+
         prog.textContent = 'Memperbarui status pesanan...';
-        for (let i = 0; i < orderNos.length; i += UPDATE_BATCH) {
-          const chunk = orderNos.slice(i, i + UPDATE_BATCH);
-          const { data, error: updErr } = await App.db()
+        const UPDATE_BATCH = 200;
+        for (let i = 0; i < matchedIds.length; i += UPDATE_BATCH) {
+          const chunk = matchedIds.slice(i, i + UPDATE_BATCH);
+          const { error: updErr } = await App.db()
             .from('orders')
             .update({ status: 'Dibayar' })
-            .eq('status', 'Selesai')
-            .in('order_no', chunk)
-            .select('id');
+            .in('id', chunk);
           if (updErr) throw new Error(`Gagal update status Dibayar: ${updErr.message}`);
-          ordersMarkedDibayar += (data || []).length;
+          ordersMarkedDibayar += chunk.length;
         }
       }
 
