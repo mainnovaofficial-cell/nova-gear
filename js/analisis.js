@@ -34,9 +34,10 @@ const Analisis = {
     ]);
     const freebieDefault = App.getFreebieDefaultPrice(settings);
 
-    // Build per-SKU map from completed orders
+    // Build per-SKU map dari pesanan berhasil (Selesai atau Dibayar — Dibayar diset
+    // oleh Import Income untuk pesanan Selesai yang dananya sudah dirilis)
     const skuMap = {};
-    (orders || []).filter(o => o.status === 'Selesai').forEach(o => {
+    (orders || []).filter(o => o.status === 'Selesai' || o.status === 'Dibayar').forEach(o => {
       const k = o.sku || o.product_name || 'TANPA-SKU';
       if (!skuMap[k]) skuMap[k] = { sku: k, name: o.product_name||k, sold: 0, gross: 0, net: 0, prices: [] };
       skuMap[k].sold  += +o.qty          || 1;
