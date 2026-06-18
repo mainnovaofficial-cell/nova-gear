@@ -50,13 +50,13 @@ const Dashboard = {
     const diprosesHariIni = diproses.filter(o => (o.created_at || '').slice(0, 10) === today);
 
     const sum       = (arr, key) => arr.reduce((s, r) => s + (+r[key] || 0), 0);
-    const omzet     = sum(selesai, 'gross_revenue');
 
-    // Net Diterima = sum(net_amount) dari income_releases (sama seperti Laba Rugi),
-    // bukan dari orders.net_revenue — supaya kedua halaman selalu sinkron.
+    // Omzet & Net Diterima diambil dari income_releases (sama seperti Laba Rugi),
+    // bukan dari orders.gross_revenue/net_revenue — supaya kedua halaman selalu sinkron.
     const relList   = releases || [];
+    const omzet     = sum(relList, 'gross_amount');
     const netRev    = sum(relList, 'net_amount');
-    const potShopee = sum(relList, 'gross_amount') - netRev;
+    const potShopee = omzet - netRev;
 
     // HPP = qty pesanan berhasil (Selesai/Dibayar) × HPP terbaru per SKU dari hpp_items
     // (bukan total seluruh stok yang pernah dibeli) — konsisten dengan logika Laba Rugi.
