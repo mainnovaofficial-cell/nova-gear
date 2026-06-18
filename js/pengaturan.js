@@ -44,31 +44,6 @@ const Pengaturan = {
         <button onclick="Pengaturan.saveGroup(['store_name'])" class="btn-primary text-xs mt-4">Simpan</button>
       </div>
 
-      <!-- Default Shopee -->
-      <div class="card">
-        <h3 class="card-title mb-4">Default Potongan Shopee</h3>
-        <div class="grid grid-cols-2 gap-3">
-          <div><label class="label">Biaya Layanan (%)</label>
-            <input id="s-service" type="number" class="input" value="${s.shopee_service_fee_pct||6.5}" step="0.1" oninput="Pengaturan._updateShopeeTotal()"/>
-          </div>
-          <div><label class="label">Gratis Ongkir (%)</label>
-            <input id="s-free-shipping" type="number" class="input" value="${s.shopee_free_shipping_pct||5.5}" step="0.1" oninput="Pengaturan._updateShopeeTotal()"/>
-          </div>
-          <div><label class="label">Promo Xtra (%)</label>
-            <input id="s-promo-xtra" type="number" class="input" value="${s.shopee_promo_xtra_pct||6.5}" step="0.1" oninput="Pengaturan._updateShopeeTotal()"/>
-          </div>
-          <div><label class="label">Affiliate (%)</label>
-            <input id="s-affiliate" type="number" class="input" value="${s.shopee_affiliate_pct||5.0}" step="0.1" oninput="Pengaturan._updateShopeeTotal()"/>
-          </div>
-        </div>
-        <div class="flex justify-between items-center mt-3 pt-3 border-t border-gray-100">
-          <span class="text-sm font-semibold text-gray-700">Total Potongan</span>
-          <span id="s-shopee-total" class="font-bold text-blue-700">0%</span>
-        </div>
-        <p class="text-xs text-gray-400 mt-2">Digunakan pada input manual dan simulasi analisis.</p>
-        <button onclick="Pengaturan.saveGroup(['shopee_service_fee_pct','shopee_free_shipping_pct','shopee_promo_xtra_pct','shopee_affiliate_pct'])" class="btn-primary text-xs mt-4">Simpan</button>
-      </div>
-
       <!-- Modal Awal -->
       <div class="card">
         <h3 class="card-title mb-4">Modal Awal</h3>
@@ -169,23 +144,11 @@ const Pengaturan = {
       </div>
 
     </div>`;
-    this._updateShopeeTotal();
-  },
-
-  _updateShopeeTotal() {
-    const ids = ['s-service', 's-free-shipping', 's-promo-xtra', 's-affiliate'];
-    const total = ids.reduce((sum, id) => sum + (parseFloat(document.getElementById(id)?.value || 0) || 0), 0);
-    const el = document.getElementById('s-shopee-total');
-    if (el) el.textContent = total.toFixed(2) + '%';
   },
 
   async saveGroup(keys) {
     const fieldMap = {
       store_name:                 's-store-name',
-      shopee_service_fee_pct:     's-service',
-      shopee_free_shipping_pct:   's-free-shipping',
-      shopee_promo_xtra_pct:      's-promo-xtra',
-      shopee_affiliate_pct:       's-affiliate',
       yuan_rate:                  's-yuan-rate',
       modal_awal:                 's-modal-awal',
       freebie_default_price:      's-freebie-price',
