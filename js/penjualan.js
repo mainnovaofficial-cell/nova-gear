@@ -1144,9 +1144,13 @@ const Penjualan = {
         const rows      = XLSX.utils.sheet_to_json(wsIncome, { header: 1, raw: false, defval: '' });
         const headerRow = rows[5] || []; // baris 6 (1-based) = index 5
 
+        // Normalisasi header: rapikan non-breaking-space/spasi ganda supaya pencocokan substring stabil
+        // (header gabungan kolom kadang menyisipkan karakter spasi non-standar dari export Shopee).
+        const normHeader = h => String(h || '').replace(/ /g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
         const findColIdx = (...terms) => {
           for (const term of terms) {
-            const idx = headerRow.findIndex(h => String(h || '').trim().toLowerCase().includes(term.toLowerCase()));
+            const t = normHeader(term);
+            const idx = headerRow.findIndex(h => normHeader(h).includes(t));
             if (idx !== -1) return idx;
           }
           return -1;
@@ -1156,7 +1160,7 @@ const Penjualan = {
         const colRelease   = findColIdx('tanggal dana dilepaskan', 'dana dilepaskan');
         const colGross     = findColIdx('harga asli produk');
         const colDiscount  = findColIdx('total diskon produk', 'diskon produk');
-        const colVoucher   = findColIdx('voucher disponsori penjual', 'voucher penjual');
+        const colVoucher   = findColIdx('voucher disponsori penjual', 'voucher ditanggung penjual', 'voucher penjual', 'seller voucher');
 
         for (let i = 6; i < rows.length; i++) { // data mulai baris 7 (index 6)
           const row = rows[i];
