@@ -156,23 +156,34 @@ const Penjualan = {
 
   /* ── STATUS & STOK HELPERS ── */
 
-  // Petakan status Shopee mentah → 4 status internal Nova Gear.
-  // Return null berarti baris harus dilewati (mis. Menunggu Pembayaran).
+  // Petakan status Shopee mentah → 4 status internal Nova Gear (Diproses/Selesai/Gagal Kirim/Batal).
+  // "Dibayar" TIDAK pernah dihasilkan di sini — itu hanya diset oleh Import Income
+  // (lihat importIncomeFile), khusus untuk pesanan yang sudah berstatus "Selesai".
+  // Return null berarti baris harus dilewati (mis. Menunggu Pembayaran, Dikembalikan).
   _mapStatus(shopeeStatus, cancelReason) {
     const s = (shopeeStatus || '').toLowerCase().trim();
     const r = (cancelReason  || '').toLowerCase().trim();
 
-    if (s === 'selesai' || s === 'completed') return 'Selesai';
-    if (s.includes('pesanan diterima') || s.includes('order received')) return 'Selesai';
-    if (s.includes('perlu dikirim') || s.includes('to ship') || s.includes('to_ship')) return 'Diproses';
-    if (s.includes('sedang dikirim') || s.includes('telah dikirim') || s.includes('shipped') || s.includes('in delivery')) return 'Diproses';
-    if (s.includes('batal') || s.includes('cancel')) {
-      if (r.includes('pengiriman gagal') || r.includes('gagal kirim') ||
-          r.includes('delivery failed')  || r.includes('failed delivery')) return 'Gagal Kirim';
-      return 'Batal';
-    }
-    if (s.includes('dikembalikan') || s.includes('return')) return 'Gagal Kirim';
-    return null; // Menunggu Pembayaran, dll — lewati
+    // Dilewati / skip — tidak diimport
+    if (s.includes('menunggu pembayaran') || s.includes('belum dibayar') || s.includes('dikembalikan')) return null;
+
+    // Gagal Kirim — dicek sebelum Batal karena di Shopee ini sering tampil sebagai "Batal" + alasan
+    if (s.includes('gagal kirim') || s.includes('pengiriman gagal') ||
+        r.includes('pengiriman gagal') || r.includes('gagal dikirim')) return 'Gagal Kirim';
+
+    // Batal (selain yang sudah ditangani sebagai Gagal Kirim di atas)
+    if (s.includes('batal')) return 'Batal';
+
+    // Selesai — termasuk status panjang seperti
+    // "Pesanan diterima, namun Pembeli masih dapat mengajukan pengembalian hingga ..."
+    if (s.includes('selesai') || s.includes('pesanan diterima') || s.includes('diterima pembeli')) return 'Selesai';
+
+    // Diproses
+    if (s.includes('perlu dikirim') || s.includes('sedang dikirim') ||
+        s.includes('telah dikirim') || s.includes('dalam pengiriman') ||
+        s === 'diproses') return 'Diproses';
+
+    return null; // status tidak dikenali — lewati
   },
 
   // Tentukan dampak stok berdasarkan status internal (bukan status Shopee mentah).
@@ -1337,7 +1348,8 @@ const Penjualan = {
         <div><label class="label">Ekspedisi</label><input id="m-exp" class="input" value="${o.expedition||''}" placeholder="JNE, J&T, dll"/></div>
         <div><label class="label">Status *</label>
           <select id="m-status" class="input">
-            ${['Diproses','Selesai','Dibayar','Gagal Kirim','Batal'].map(s=>`<option ${o.status===s?'selected':''}>${s}</option>`).join('')}
+            ${['Diproses','Selesai','Gagal Kirim','Batal'].map(s=>`<option ${o.status===s?'selected':''}>${s}</option>`).join('')}
+            ${o.status === 'Dibayar' ? `<option selected>Dibayar</option>` : ''}
           </select>
         </div>
         <div><label class="label">Stok Action</label>
