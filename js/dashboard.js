@@ -26,8 +26,8 @@ const Dashboard = {
       { data: opData,    error: e4 },
       { data: scanToday, error: e5 },
     ] = await Promise.all([
-      db.from('orders').select('status,gross_revenue,net_revenue,shopee_commission,shopee_service_fee,shopee_ads_fee,shopee_other_fee,order_date,expedition,created_at'),
-      db.from('hpp_items').select('total_cost'),
+      db.from('orders').select('status,gross_revenue,net_revenue,shopee_commission,shopee_service_fee,shopee_ads_fee,shopee_other_fee,order_date,expedition,created_at,qty,sku'),
+      db.from('hpp_items').select('sku,cost_per_unit,created_at').order('created_at', { ascending: false }),
       db.from('ads').select('cost'),
       db.from('operational').select('cost'),
       db.from('scan_logs').select('id,expedition,is_cancelled,scan_date').eq('scan_date', App.todayISO()),
@@ -51,7 +51,21 @@ const Dashboard = {
     const omzet     = sum(selesai, 'gross_revenue');
     const netRev    = sum(selesai, 'net_revenue');
     const potShopee = sum(selesai, 'shopee_commission') + sum(selesai, 'shopee_service_fee') + sum(selesai, 'shopee_ads_fee') + sum(selesai, 'shopee_other_fee');
-    const totalHPP  = sum(hppData  || [], 'total_cost');
+
+    // HPP = qty pesanan berhasil (Selesai/Dibayar) × HPP terbaru per SKU dari hpp_items
+    // (bukan total seluruh stok yang pernah dibeli) — konsisten dengan logika Laba Rugi.
+    const hppMap = {};
+    (hppData || []).forEach(r => {
+      const k = r.sku;
+      if (!k || k in hppMap) return; // sudah diurutkan terbaru dulu → pertama ditemukan = terbaru
+      hppMap[k] = +r.cost_per_unit || 0;
+    });
+    const freebieDefault = App.getFreebieDefaultPrice(settings);
+    const totalHPP = selesai.reduce((s, o) => {
+      const qty = +o.qty || 1;
+      return s + (App.isFreebieSku(o.sku) ? qty * freebieDefault : qty * (hppMap[o.sku] || 0));
+    }, 0);
+
     const totalAds  = sum(adsData  || [], 'cost');
     const totalOp   = sum(opData   || [], 'cost');
     const totalExp  = totalHPP + totalAds + totalOp;
