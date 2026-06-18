@@ -1200,19 +1200,37 @@ const Penjualan = {
       const wsSummary  = wb.Sheets[summarySheetName];
       const rawRows    = XLSX.utils.sheet_to_json(wsSummary, { header: 1, raw: false, defval: '' });
 
+      // Normalisasi label: rapikan spasi ganda/non-breaking-space supaya pencocokan substring stabil
+      const normLabel = s => String(s || '').replace(/ /g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+
+      // Baris ringkasan/total Shopee sering memakai sel label gabungan (merged) yang lebih
+      // lebar, sehingga nilai angkanya tidak selalu persis di kolom sebelah label — bisa
+      // beberapa kolom setelahnya. Maka: ambil label = sel pertama yang tidak kosong,
+      // value = sel angka PALING KANAN di baris yang sama (bukan cuma kolom i+1).
       const valMap = {};
       for (const row of rawRows) {
-        for (let i = 0; i < row.length - 1; i++) {
-          const label = String(row[i]).trim();
-          const value = String(row[i + 1]).trim();
-          if (label && value && /\d/.test(value)) valMap[label.toLowerCase()] = value;
+        if (!row || !row.length) continue;
+        let labelIdx = -1;
+        for (let i = 0; i < row.length; i++) {
+          if (String(row[i] ?? '').trim()) { labelIdx = i; break; }
         }
+        if (labelIdx === -1) continue;
+        const rawLabel = String(row[labelIdx]).trim();
+        if (!rawLabel || /^[\d.,\-]+$/.test(rawLabel)) continue; // baris diawali angka murni → bukan label
+
+        let value = null;
+        for (let i = row.length - 1; i > labelIdx; i--) {
+          const cell = String(row[i] ?? '').trim();
+          if (cell && /\d/.test(cell)) { value = cell; break; }
+        }
+        if (value !== null) valMap[normLabel(rawLabel)] = value;
       }
 
       const findVal = (...terms) => {
         for (const term of terms) {
+          const t = normLabel(term);
           for (const [label, value] of Object.entries(valMap)) {
-            if (label.includes(term.toLowerCase())) return this._toNum(value);
+            if (label.includes(t)) return this._toNum(value);
           }
         }
         return 0;
@@ -1220,14 +1238,14 @@ const Penjualan = {
 
       const record = {
         bulan, tahun,
-        total_pendapatan:     findVal('total pendapatan', 'total revenue', 'pendapatan kotor'),
+        total_pendapatan:     findVal('total pendapatan', 'total penghasilan', 'total revenue', 'pendapatan kotor', 'penghasilan kotor'),
         voucher_penjual:      findVal('voucher penjual', 'seller voucher'),
         biaya_komisi_ams:     findVal('komisi ams', 'ams commission', 'biaya komisi'),
         biaya_administrasi:   findVal('biaya administrasi', 'admin fee', 'administration fee'),
         biaya_layanan:        findVal('biaya layanan', 'service fee', 'layanan'),
         biaya_proses_pesanan: findVal('biaya proses pesanan', 'processing fee', 'proses pesanan'),
         premi:                findVal('premi', 'premium'),
-        total_dilepas:        findVal('total yang dilepas', 'total released', 'total dilepas'),
+        total_dilepas:        findVal('total yang dilepas', 'total dilepaskan', 'dana yang dilepaskan', 'total released', 'total dilepas'),
       };
 
       prog.textContent = 'Menyimpan ringkasan ke database...';
