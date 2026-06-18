@@ -53,8 +53,10 @@ const Dashboard = {
 
     // Omzet & Net Diterima diambil dari income_releases (sama seperti Laba Rugi),
     // bukan dari orders.gross_revenue/net_revenue — supaya kedua halaman selalu sinkron.
+    // Omzet = gross_amount - diskon. "discount" sudah tersimpan negatif di DB, jadi
+    // secara matematis tinggal ditambahkan (gross_amount + discount).
     const relList   = releases || [];
-    const omzet     = sum(relList, 'gross_amount');
+    const omzet     = sum(relList, 'gross_amount') + sum(relList, 'discount');
     const netRev    = sum(relList, 'net_amount');
     const potShopee = omzet - netRev;
 
