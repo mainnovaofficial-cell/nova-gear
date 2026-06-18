@@ -106,7 +106,7 @@ const LabaRugi = {
         if (App.isFreebieSku(o.sku)) {
           totalFreebie += qty * freebieDefault;
         } else {
-          totalHPPBarang += qty * (hppMap[o.sku] || 0);
+          totalHPPBarang += qty * App.resolveHppUnit(hppMap, o.sku);
         }
       });
       const totalHPP  = totalHPPBarang + totalFreebie;

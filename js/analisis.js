@@ -38,17 +38,6 @@ const Analisis = {
     else this._renderAktual();
   },
 
-  // SKU di orders sering punya suffix varian (mis. "BM-M5-B-F", "BM-M5-B-TF")
-  // yang berbagi HPP fisik sama dengan SKU induknya di hpp_items (mis. "BM-M5-B").
-  // Coba exact match dulu, kalau tidak ketemu strip 1 segmen suffix terakhir lalu coba lagi.
-  _resolveHpp(hppMap, sku) {
-    if (!sku) return 0;
-    if (sku in hppMap) return hppMap[sku];
-    const base = sku.replace(/-[^-]+$/, '');
-    if (base && base !== sku && base in hppMap) return hppMap[base];
-    return 0;
-  },
-
   /* ═══════════════════════════════════════════════
      MODE 1 — AKTUAL (dari income_releases & orders)
   ═══════════════════════════════════════════════ */
@@ -114,7 +103,7 @@ const Analisis = {
     });
 
     const skuList = Object.values(skuMap).map(p => {
-      const hppUnit  = this._resolveHpp(hppMap, p.sku) + (App.isFreebieSku(p.sku) ? freebieDefault : 0);
+      const hppUnit  = App.resolveHppUnit(hppMap, p.sku) + (App.isFreebieSku(p.sku) ? freebieDefault : 0);
       const hppTotal = p.sold * hppUnit;
       const profit   = p.net - hppTotal;
       const marginPct = hppTotal > 0 ? (profit / hppTotal * 100) : (profit > 0 ? 100 : 0);

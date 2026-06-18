@@ -63,7 +63,7 @@ const Dashboard = {
     const freebieDefault = App.getFreebieDefaultPrice(settings);
     const totalHPP = selesai.reduce((s, o) => {
       const qty = +o.qty || 1;
-      return s + (App.isFreebieSku(o.sku) ? qty * freebieDefault : qty * (hppMap[o.sku] || 0));
+      return s + (App.isFreebieSku(o.sku) ? qty * freebieDefault : qty * App.resolveHppUnit(hppMap, o.sku));
     }, 0);
 
     const totalAds  = sum(adsData  || [], 'cost');
