@@ -25,14 +25,16 @@ const Dashboard = {
       { data: adsData,   error: e3 },
       { data: opData,    error: e4 },
       { data: scanToday, error: e5 },
+      { data: releases,  error: e6 },
     ] = await Promise.all([
       db.from('orders').select('status,gross_revenue,net_revenue,shopee_commission,shopee_service_fee,shopee_ads_fee,shopee_other_fee,order_date,expedition,created_at,qty,sku'),
       db.from('hpp_items').select('sku,cost_per_unit,created_at').order('created_at', { ascending: false }),
       db.from('ads').select('cost'),
       db.from('operational').select('cost'),
       db.from('scan_logs').select('id,expedition,is_cancelled,scan_date').eq('scan_date', App.todayISO()),
+      db.from('income_releases').select('gross_amount,discount,voucher_seller,net_amount'),
     ]);
-    if (e1 || e2 || e3 || e4 || e5) throw new Error((e1||e2||e3||e4||e5).message);
+    if (e1 || e2 || e3 || e4 || e5 || e6) throw new Error((e1||e2||e3||e4||e5||e6).message);
 
     const settings  = await App.getSettings();
     const modalAwal = parseFloat(settings.modal_awal || 0);
@@ -49,8 +51,12 @@ const Dashboard = {
 
     const sum       = (arr, key) => arr.reduce((s, r) => s + (+r[key] || 0), 0);
     const omzet     = sum(selesai, 'gross_revenue');
-    const netRev    = sum(selesai, 'net_revenue');
-    const potShopee = sum(selesai, 'shopee_commission') + sum(selesai, 'shopee_service_fee') + sum(selesai, 'shopee_ads_fee') + sum(selesai, 'shopee_other_fee');
+
+    // Net Diterima = sum(net_amount) dari income_releases (sama seperti Laba Rugi),
+    // bukan dari orders.net_revenue — supaya kedua halaman selalu sinkron.
+    const relList   = releases || [];
+    const netRev    = sum(relList, 'net_amount');
+    const potShopee = sum(relList, 'gross_amount') - netRev;
 
     // HPP = qty pesanan berhasil (Selesai/Dibayar) × HPP terbaru per SKU dari hpp_items
     // (bukan total seluruh stok yang pernah dibeli) — konsisten dengan logika Laba Rugi.
