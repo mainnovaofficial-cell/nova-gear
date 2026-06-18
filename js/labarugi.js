@@ -1,19 +1,23 @@
 /* ═══════════════════════════════════════════════════════
    Nova Gear — Laba Rugi Module
-   Laporan P&L otomatis dari semua data
+   Laporan P&L otomatis dari Income Releases (Shopee) + HPP + Beban
 ═══════════════════════════════════════════════════════ */
 'use strict';
 
 const LabaRugi = {
+  _bulanNames: ['','Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'],
+
   async onLoad() {
-    const now = App.todayISO();
-    const el  = document.getElementById('page-labarugi');
+    const now   = new Date();
+    const el    = document.getElementById('page-labarugi');
     el.innerHTML = `
     <div class="page-header">
-      <div><h2>Laba Rugi</h2><p>Laporan otomatis dari seluruh data toko</p></div>
+      <div><h2>Laba Rugi</h2><p>Laporan otomatis berdasarkan bulan rilis dana (Income Shopee)</p></div>
       <div class="flex gap-2 flex-wrap items-center">
-        <input id="lr-from" type="date" class="input !py-1 text-xs w-36" value="${now.slice(0,7)+'-01'}"/>
-        <input id="lr-to"   type="date" class="input !py-1 text-xs w-36" value="${now}"/>
+        <select id="lr-bulan" class="input !py-1 text-xs">
+          ${this._bulanNames.map((m, i) => i === 0 ? '' : `<option value="${i}" ${i === now.getMonth()+1 ? 'selected' : ''}>${m}</option>`).join('')}
+        </select>
+        <input id="lr-tahun" type="number" class="input !py-1 text-xs w-24" value="${now.getFullYear()}" min="2020" max="2035"/>
         <button onclick="LabaRugi._render()" class="btn-primary text-xs">Hitung</button>
         <button onclick="LabaRugi._print()" class="btn-secondary text-xs">Print / PDF</button>
       </div>
@@ -23,9 +27,9 @@ const LabaRugi = {
   },
 
   async _render() {
-    const from = document.getElementById('lr-from')?.value || '';
-    const to   = document.getElementById('lr-to')?.value   || '';
-    const el   = document.getElementById('lr-content');
+    const bulan = parseInt(document.getElementById('lr-bulan')?.value) || (new Date().getMonth() + 1);
+    const tahun = parseInt(document.getElementById('lr-tahun')?.value) || new Date().getFullYear();
+    const el    = document.getElementById('lr-content');
     el.innerHTML = `<div class="skeleton h-60 rounded-xl"></div>`;
 
     try {
@@ -33,64 +37,95 @@ const LabaRugi = {
       const settings  = await App.getSettings();
       const modalAwal = parseFloat(settings.modal_awal || 0);
 
-      let ordersQ = db.from('orders').select('status,gross_revenue,net_revenue,shopee_commission,shopee_service_fee,shopee_ads_fee,shopee_other_fee,qty,sku');
-      let hppQ    = db.from('hpp_batches').select('purchase_date,hpp_items(total_cost)');
-      let adsQ    = db.from('ads').select('cost,ad_date');
-      let opQ     = db.from('operational').select('cost,op_date');
+      const dateFrom = `${tahun}-${String(bulan).padStart(2, '0')}-01`;
+      const nextMonth = new Date(tahun, bulan, 1); // bulan 1-based → index ini = bulan berikutnya
+      const dateTo = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
 
-      if (from) {
-        ordersQ = ordersQ.gte('order_date', from);
-        hppQ    = hppQ.gte('purchase_date', from);
-        adsQ    = adsQ.gte('ad_date', from);
-        opQ     = opQ.gte('op_date', from);
+      // ── 1. Income releases bulan ini (Net Diterima) ──
+      const { data: releasesData, error: relErr } = await db
+        .from('income_releases')
+        .select('order_no,release_date,gross_amount,discount,voucher_seller,net_amount')
+        .gte('release_date', dateFrom)
+        .lt('release_date', dateTo);
+      if (relErr) throw relErr;
+      const releases = releasesData || [];
+      const orderNos = [...new Set(releases.map(r => r.order_no).filter(Boolean))];
+
+      // ── 2. Order lines (qty, sku) untuk pesanan Dibayar yang match income bulan ini ──
+      let orderLines = [];
+      if (orderNos.length) {
+        const BATCH = 100;
+        for (let i = 0; i < orderNos.length; i += BATCH) {
+          const chunk = orderNos.slice(i, i + BATCH);
+          const { data, error } = await db
+            .from('orders')
+            .select('order_no,sku,qty,status')
+            .eq('status', 'Dibayar')
+            .in('order_no', chunk);
+          if (error) throw error;
+          orderLines.push(...(data || []));
+        }
       }
-      if (to) {
-        ordersQ = ordersQ.lte('order_date', to);
-        hppQ    = hppQ.lte('purchase_date', to);
-        adsQ    = adsQ.lte('ad_date', to);
-        opQ     = opQ.lte('op_date', to);
-      }
 
-      const [{ data: orders }, { data: hppBatches }, { data: ads }, { data: ops }] = await Promise.all([ordersQ, hppQ, adsQ, opQ]);
+      // ── 3. HPP per SKU terbaru ──
+      const { data: hppItemsData, error: hppErr } = await db
+        .from('hpp_items')
+        .select('sku,cost_per_unit,created_at,hpp_batches(purchase_date)')
+        .order('created_at', { ascending: false });
+      if (hppErr) throw hppErr;
+      const hppMap = {};
+      (hppItemsData || []).forEach(r => {
+        const k = r.sku;
+        if (!k || k in hppMap) return; // sudah descending → pertama ditemukan = terbaru
+        hppMap[k] = +r.cost_per_unit || 0;
+      });
 
-      const hpp = (hppBatches || []).flatMap(b => b.hpp_items || []);
+      // ── 4. Ads & Operasional bulan ini ──
+      const [{ data: ads, error: adsErr }, { data: ops, error: opsErr }] = await Promise.all([
+        db.from('ads').select('cost,ad_date').gte('ad_date', dateFrom).lt('ad_date', dateTo),
+        db.from('operational').select('cost,op_date').gte('op_date', dateFrom).lt('op_date', dateTo),
+      ]);
+      if (adsErr) throw adsErr;
+      if (opsErr) throw opsErr;
 
-      const sum = (arr, key) => (arr||[]).reduce((s,r) => s+(+r[key]||0), 0);
+      const sum = (arr, key) => (arr || []).reduce((s, r) => s + (+r[key] || 0), 0);
 
-      const all      = orders || [];
-      const selesai  = all.filter(o => o.status === 'Selesai');
-      const batal    = all.filter(o => o.status === 'Batal');
-      const gagal    = all.filter(o => o.status === 'Gagal Kirim');
-      const retur    = all.filter(o => o.status === 'Dikembalikan');
+      const grossAmount = sum(releases, 'gross_amount');
+      const discount    = sum(releases, 'discount');
+      const voucher     = sum(releases, 'voucher_seller');
+      const netRev      = sum(releases, 'net_amount');
 
-      const omzet      = sum(selesai, 'gross_revenue');
-      const potKomisi  = sum(selesai, 'shopee_commission');
-      const potLayanan = sum(selesai, 'shopee_service_fee');
-      const potIklan   = sum(selesai, 'shopee_ads_fee');
-      const potLain    = sum(selesai, 'shopee_other_fee');
-      const totalPot   = potKomisi + potLayanan + potIklan + potLain;
-      const netRev     = sum(selesai, 'net_revenue') || (omzet - totalPot);
-
-      // HPP per unit = HPP dari hpp_items + freebie (kalau SKU pesanan berakhiran "-F")
+      // HPP = qty × HPP per unit per SKU (hpp_items) — kecuali SKU freebie "-F" → freebie default
       const freebieDefault = App.getFreebieDefaultPrice(settings);
-      const purchaseHPP    = sum(hpp, 'total_cost');
-      const totalFreebie   = selesai
-        .filter(o => App.isFreebieSku(o.sku))
-        .reduce((s,o) => s + (+o.qty || 1) * freebieDefault, 0);
-      const totalHPP   = purchaseHPP + totalFreebie;
-      const labaKotor  = netRev - totalHPP;
+      let totalHPPBarang = 0;
+      let totalFreebie   = 0;
+      let qtyTerjual     = 0;
+      orderLines.forEach(o => {
+        const qty = +o.qty || 1;
+        qtyTerjual += qty;
+        if (App.isFreebieSku(o.sku)) {
+          totalFreebie += qty * freebieDefault;
+        } else {
+          totalHPPBarang += qty * (hppMap[o.sku] || 0);
+        }
+      });
+      const totalHPP  = totalHPPBarang + totalFreebie;
+      const labaKotor = netRev - totalHPP;
 
       const totalAds   = sum(ads, 'cost');
       const totalOps   = sum(ops, 'cost');
       const totalBeban = totalAds + totalOps;
 
-      const labaBersih      = labaKotor - totalBeban;
-      const marginPct       = omzet > 0 ? (labaBersih / omzet * 100) : 0;
-      const totalPemasukan  = netRev;
+      const labaBersih       = labaKotor - totalBeban;
+      const marginPct        = grossAmount > 0 ? (labaBersih / grossAmount * 100) : 0;
+      const totalPemasukan   = netRev;
       const totalPengeluaran = totalHPP + totalAds + totalOps;
-      const sisaKas         = modalAwal + totalPemasukan - totalPengeluaran;
+      const sisaKas          = modalAwal + totalPemasukan - totalPengeluaran;
 
-      const label = from && to ? `${App.formatDate(from)} – ${App.formatDate(to)}` : 'Semua Waktu';
+      const uniqueOrders   = orderNos.length;
+      const unmatchedCount = orderNos.length - new Set(orderLines.map(o => o.order_no)).size;
+
+      const label = `${this._bulanNames[bulan]} ${tahun}`;
 
       el.innerHTML = `
       <div id="lr-print-area" class="max-w-2xl mx-auto">
@@ -104,20 +139,18 @@ const LabaRugi = {
         <div class="card space-y-0 !p-0 overflow-hidden">
 
           <!-- PENDAPATAN -->
-          ${this._section('PENDAPATAN', [
-            { label: 'Omzet Kotor (Gross Revenue)', value: omzet, main: true },
+          ${this._section('PENDAPATAN (INCOME RELEASES)', [
+            { label: 'Harga Asli Produk', value: grossAmount, main: true },
           ])}
-          ${this._subsection('Potongan Shopee', [
-            { label: 'Komisi Shopee', value: -potKomisi },
-            { label: 'Biaya Layanan', value: -potLayanan },
-            { label: 'Biaya Program Iklan Shopee', value: -potIklan },
-            { label: 'Biaya Lainnya', value: -potLain },
+          ${this._subsection('Potongan', [
+            { label: 'Total Diskon Produk', value: discount },
+            { label: 'Voucher Disponsori Penjual', value: voucher },
           ])}
-          ${this._total('Net Diterima (setelah potongan)', netRev, netRev >= 0 ? 'text-blue-700' : 'text-red-600')}
+          ${this._total('Net Diterima', netRev, netRev >= 0 ? 'text-blue-700' : 'text-red-600')}
 
           <!-- HPP -->
           ${this._section('HARGA POKOK PENJUALAN', [
-            { label: 'Modal Barang (Pembelian)', value: -purchaseHPP, main: true },
+            { label: 'HPP Barang (qty × HPP per SKU)', value: -totalHPPBarang, main: true },
           ])}
           ${this._subsection('Tambahan Biaya', [
             { label: 'Freebie (SKU berakhiran "-F")', value: -totalFreebie },
@@ -167,14 +200,15 @@ const LabaRugi = {
 
         <!-- Order summary -->
         <div class="card mt-4">
-          <p class="card-title mb-3">Ringkasan Pesanan</p>
-          <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-center">
-            ${[['Total Pesanan',all.length,''],['Selesai',selesai.length,'text-green-600'],['Dibatalkan',batal.length,'text-gray-500'],['Gagal',gagal.length,'text-red-600'],['Retur',retur.length,'text-orange-600']].map(([l,v,c])=>`
+          <p class="card-title mb-3">Ringkasan Pesanan Dibayar</p>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 text-center">
+            ${[['Pesanan di Income', uniqueOrders, ''], ['Item Terjual (Qty)', qtyTerjual, 'text-blue-600'], ['Tanpa Data Qty', Math.max(unmatchedCount, 0), unmatchedCount > 0 ? 'text-orange-600' : 'text-gray-400']].map(([l, v, c]) => `
             <div class="bg-gray-50 rounded-lg p-3">
               <p class="text-xs text-gray-500">${l}</p>
               <p class="text-xl font-bold ${c}">${App.formatNumber(v)}</p>
             </div>`).join('')}
           </div>
+          ${unmatchedCount > 0 ? `<p class="text-xs text-orange-600 mt-3">${unmatchedCount} pesanan ada di file Income tapi tidak ditemukan sebagai pesanan status "Dibayar" di tabel Pesanan (HPP/Freebie-nya tidak terhitung).</p>` : ''}
         </div>
       </div>`;
     } catch (err) {

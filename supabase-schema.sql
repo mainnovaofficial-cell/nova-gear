@@ -32,7 +32,7 @@ create table if not exists orders (
   net_revenue         numeric(14,2) default 0,
   buyer_shipping      numeric(14,2) default 0,
   expedition          text,
-  status              text,   -- Selesai | Dibatalkan | Dikembalikan | Gagal
+  status              text,   -- Diproses | Selesai | Dibayar | Gagal Kirim | Batal
   order_date          date,
   payment_date        date,
   source              text default 'shopee',  -- shopee | offline
@@ -156,6 +156,22 @@ create table if not exists income_summary (
 );
 
 create index if not exists income_summary_period_idx on income_summary(tahun, bulan);
+
+-- ── Income Releases (detail per No. Pesanan dari sheet "Income" Shopee)
+create table if not exists income_releases (
+  id              uuid primary key default gen_random_uuid(),
+  order_no        text not null,
+  release_date    date,
+  gross_amount    numeric(14,2) default 0,
+  discount        numeric(14,2) default 0,
+  voucher_seller  numeric(14,2) default 0,
+  net_amount      numeric(14,2) default 0,
+  created_at      timestamptz default now(),
+  unique (order_no)
+);
+
+create index if not exists income_releases_release_date_idx on income_releases(release_date);
+create index if not exists income_releases_order_no_idx     on income_releases(order_no);
 
 -- ── Settings (pengaturan aplikasi)
 create table if not exists settings (
@@ -367,6 +383,31 @@ alter table stok_awal add column if not exists hidden boolean default false;
 -- halaman Stok — ini logika sisi aplikasi, tidak perlu migrasi data.
 -- Data penjualan & HPP produk yang disembunyikan tetap terhitung normal
 -- di Laba Rugi dan Analisis Margin (filter hidden hanya berlaku di Rekap Stok).
+
+-- ═══════════════════════════════════════════════════════
+--  MIGRASI v8 — Income Releases (detail per No. Pesanan, sheet "Income")
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+create table if not exists income_releases (
+  id              uuid primary key default gen_random_uuid(),
+  order_no        text not null,
+  release_date    date,
+  gross_amount    numeric(14,2) default 0,
+  discount        numeric(14,2) default 0,
+  voucher_seller  numeric(14,2) default 0,
+  net_amount      numeric(14,2) default 0,
+  created_at      timestamptz default now(),
+  unique (order_no)
+);
+
+create index if not exists income_releases_release_date_idx on income_releases(release_date);
+create index if not exists income_releases_order_no_idx     on income_releases(order_no);
+
+-- Catatan: status pesanan baru "Dibayar" akan otomatis diset oleh
+-- import Income untuk order_no yang ditemukan di sheet Income dan
+-- statusnya saat ini "Selesai". Tidak perlu migrasi data tambahan
+-- untuk kolom status (kolom text sudah ada sejak awal).
 
 -- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup

@@ -252,6 +252,7 @@ table.data-table tbody td {
 .badge-blue   { background: #dbeafe; color: #2563eb; }
 .badge-gray   { background: #f3f4f6; color: #6b7280; }
 .badge-orange { background: #ffedd5; color: #ea580c; }
+.badge-emerald{ background: #d1fae5; color: #059669; }
 
 /* ── Tabs ── */
 .tabs {

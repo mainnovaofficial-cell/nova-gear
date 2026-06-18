@@ -65,6 +65,7 @@ const Penjualan = {
           <option value="">Semua Status</option>
           <option>Diproses</option>
           <option>Selesai</option>
+          <option>Dibayar</option>
           <option>Gagal Kirim</option>
           <option>Batal</option>
         </select>
@@ -206,7 +207,7 @@ const Penjualan = {
     if (!data.length) return `<div class="empty-state"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg><p>Tidak ada pesanan</p></div>`;
 
     const statusBadge = s => {
-      const m = { Selesai:'badge-green', Diproses:'badge-blue', 'Gagal Kirim':'badge-red', Batal:'badge-gray' };
+      const m = { Selesai:'badge-green', Dibayar:'badge-emerald', Diproses:'badge-blue', 'Gagal Kirim':'badge-red', Batal:'badge-gray' };
       return `<span class="badge ${m[s]||'badge-gray'}">${s||'-'}</span>`;
     };
     const batalBtn = (id, status) => status === 'Batal' ? '' : `
@@ -283,7 +284,7 @@ const Penjualan = {
     });
     const rows = Object.entries(map);
     if (!rows.length) return `<div class="empty-state"><p>Tidak ada data</p></div>`;
-    const badgeMap = { Selesai:'badge-green', Diproses:'badge-blue', 'Gagal Kirim':'badge-red', Batal:'badge-gray' };
+    const badgeMap = { Selesai:'badge-green', Dibayar:'badge-emerald', Diproses:'badge-blue', 'Gagal Kirim':'badge-red', Batal:'badge-gray' };
     const totalOrders = new Set(data.map(o => o.order_no || o.id)).size;
     const totalOmzet  = data.reduce((s, o) => s + (+o.gross_revenue||0), 0);
     const totalNet    = Object.values(netByOrder).reduce((s, v) => s + v, 0);
@@ -340,7 +341,7 @@ const Penjualan = {
     const sign      = n => n > 0 ? '+' : '';
 
     const statusBadge = s => {
-      const m = { Selesai:'badge-green', Diproses:'badge-blue', 'Gagal Kirim':'badge-red', Batal:'badge-gray' };
+      const m = { Selesai:'badge-green', Dibayar:'badge-emerald', Diproses:'badge-blue', 'Gagal Kirim':'badge-red', Batal:'badge-gray' };
       return `<span class="badge ${m[s]||'badge-gray'}">${s||'-'}</span>`;
     };
 
@@ -1072,11 +1073,14 @@ const Penjualan = {
       size: 'max-w-xl',
       body: `
         <p class="text-sm text-gray-600 mb-3">Upload file <strong>.xlsx</strong> penghasilan Shopee.
-        Nilai diambil dari sheet <strong>Summary / Ringkasan</strong>.</p>
+        Detail per pesanan diambil dari sheet <strong>Income</strong>, ringkasan dari sheet <strong>Summary / Ringkasan</strong>.</p>
         <div class="bg-green-50 border border-green-100 rounded-lg p-3 text-xs text-green-800 mb-4">
-          <p class="font-semibold mb-1">Field yang diambil:</p>
+          <p class="font-semibold mb-1">Sheet Income (per No. Pesanan):</p>
+          <p>No. Pesanan · Tanggal Dana Dilepaskan · Harga Asli Produk · Total Diskon Produk · Voucher disponsori Penjual</p>
+          <p class="font-semibold mt-2 mb-1">Sheet Summary (ringkasan bulanan):</p>
           <p>Total Pendapatan · Voucher Penjual · Biaya Komisi AMS · Biaya Administrasi</p>
           <p>Biaya Layanan · Biaya Proses Pesanan · Premi · Total yang Dilepas</p>
+          <p class="mt-2 text-green-700">Pesanan yang ditemukan di sheet Income otomatis diset status <strong>Dibayar</strong>.</p>
         </div>
         <div class="grid grid-cols-2 gap-3 mb-4">
           <div><label class="label">Bulan</label>
@@ -1118,9 +1122,83 @@ const Penjualan = {
     try {
       const buf = await file.arrayBuffer();
       const wb  = XLSX.read(buf, { type: 'array', cellDates: true });
-      const sheetName = wb.SheetNames.find(n => /summary|ringkasan/i.test(n)) || wb.SheetNames[0];
-      const ws        = wb.Sheets[sheetName];
-      const rawRows   = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+
+      /* ── 1. Sheet "Income" → income_releases (per No. Pesanan) ── */
+      const incomeSheetName = wb.SheetNames.find(n => /^income$/i.test(n.trim())) ||
+                               wb.SheetNames.find(n => /income/i.test(n));
+      const releases = [];
+
+      if (incomeSheetName) {
+        const wsIncome = wb.Sheets[incomeSheetName];
+        const rows      = XLSX.utils.sheet_to_json(wsIncome, { header: 1, raw: false, defval: '' });
+        const headerRow = rows[5] || []; // baris 6 (1-based) = index 5
+
+        const findColIdx = (...terms) => {
+          for (const term of terms) {
+            const idx = headerRow.findIndex(h => String(h || '').trim().toLowerCase().includes(term.toLowerCase()));
+            if (idx !== -1) return idx;
+          }
+          return -1;
+        };
+
+        const COL_ORDER_NO = 1; // kolom B
+        const colRelease   = findColIdx('tanggal dana dilepaskan', 'dana dilepaskan');
+        const colGross     = findColIdx('harga asli produk');
+        const colDiscount  = findColIdx('total diskon produk', 'diskon produk');
+        const colVoucher   = findColIdx('voucher disponsori penjual', 'voucher penjual');
+
+        for (let i = 6; i < rows.length; i++) { // data mulai baris 7 (index 6)
+          const row = rows[i];
+          if (!row) continue;
+          const orderNo = String(row[COL_ORDER_NO] || '').trim();
+          if (!orderNo) continue;
+          const gross   = colGross    !== -1 ? this._toNum(row[colGross])    : 0;
+          const disc    = colDiscount !== -1 ? this._toNum(row[colDiscount]) : 0;
+          const voucher = colVoucher  !== -1 ? this._toNum(row[colVoucher])  : 0;
+          releases.push({
+            order_no:       orderNo,
+            release_date:   colRelease !== -1 ? this._toDate(row[colRelease]) : null,
+            gross_amount:   gross,
+            discount:       disc,
+            voucher_seller: voucher,
+            net_amount:     gross + disc + voucher,
+          });
+        }
+      }
+
+      let releasesSaved = 0;
+      let ordersMarkedDibayar = 0;
+      if (releases.length) {
+        prog.textContent = `Menyimpan ${releases.length} data Income...`;
+        const SAVE_BATCH = 500;
+        for (let i = 0; i < releases.length; i += SAVE_BATCH) {
+          const batch = releases.slice(i, i + SAVE_BATCH);
+          const { error } = await App.db().from('income_releases').upsert(batch, { onConflict: 'order_no' });
+          if (error) throw new Error(`Gagal simpan income_releases: ${error.message}`);
+        }
+        releasesSaved = releases.length;
+
+        // Update status pesanan: Selesai → Dibayar untuk order_no yang ada di file Income
+        const orderNos = [...new Set(releases.map(r => r.order_no))];
+        const UPDATE_BATCH = 100;
+        prog.textContent = 'Memperbarui status pesanan...';
+        for (let i = 0; i < orderNos.length; i += UPDATE_BATCH) {
+          const chunk = orderNos.slice(i, i + UPDATE_BATCH);
+          const { data, error: updErr } = await App.db()
+            .from('orders')
+            .update({ status: 'Dibayar' })
+            .eq('status', 'Selesai')
+            .in('order_no', chunk)
+            .select('id');
+          if (updErr) throw new Error(`Gagal update status Dibayar: ${updErr.message}`);
+          ordersMarkedDibayar += (data || []).length;
+        }
+      }
+
+      /* ── 2. Sheet "Summary"/"Ringkasan" → income_summary (seperti sebelumnya) ── */
+      const summarySheetName = wb.SheetNames.find(n => /summary|ringkasan/i.test(n)) || wb.SheetNames[0];
+      const wsSummary  = wb.Sheets[summarySheetName];
+      const rawRows    = XLSX.utils.sheet_to_json(wsSummary, { header: 1, raw: false, defval: '' });
 
       const valMap = {};
       for (const row of rawRows) {
@@ -1152,7 +1230,7 @@ const Penjualan = {
         total_dilepas:        findVal('total yang dilepas', 'total released', 'total dilepas'),
       };
 
-      prog.textContent = 'Menyimpan ke database...';
+      prog.textContent = 'Menyimpan ringkasan ke database...';
       const { error } = await App.db().from('income_summary').upsert(record, { onConflict: 'bulan,tahun' });
       if (error) throw error;
 
@@ -1160,6 +1238,12 @@ const Penjualan = {
       res.innerHTML = `
         <div class="space-y-1">
           <p class="font-semibold text-green-700">Income ${bulanNames[bulan]} ${tahun} berhasil disimpan!</p>
+          ${releasesSaved ? `
+          <div class="mt-2 text-xs text-gray-700 border-t border-gray-100 pt-2 space-y-0.5">
+            <p>Data Income per pesanan: <strong>${releasesSaved}</strong> baris</p>
+            <p>Status pesanan diupdate jadi <strong>Dibayar</strong>: <strong>${ordersMarkedDibayar}</strong> pesanan</p>
+          </div>` : `
+          <p class="text-xs text-orange-600 mt-1">Sheet "Income" tidak ditemukan — detail per pesanan dilewati, hanya ringkasan Summary yang disimpan.</p>`}
           <div class="mt-2 space-y-0.5 text-xs text-gray-700 border-t border-gray-100 pt-2">
             <p>Total Pendapatan: <strong>${App.formatRupiah(record.total_pendapatan)}</strong></p>
             <p>Voucher Penjual: <strong>${App.formatRupiah(record.voucher_penjual)}</strong></p>
@@ -1175,6 +1259,10 @@ const Penjualan = {
       res.classList.remove('hidden');
       prog.classList.add('hidden');
       App.toast(`Income ${bulanNames[bulan]} ${tahun} berhasil diimport!`, 'success');
+
+      await this._loadOrders();
+      this._renderTab();
+      this._updateReviewBadge();
 
     } catch (err) {
       prog.classList.add('hidden');
@@ -1206,7 +1294,7 @@ const Penjualan = {
         <div><label class="label">Ekspedisi</label><input id="m-exp" class="input" value="${o.expedition||''}" placeholder="JNE, J&T, dll"/></div>
         <div><label class="label">Status *</label>
           <select id="m-status" class="input">
-            ${['Diproses','Selesai','Gagal Kirim','Batal'].map(s=>`<option ${o.status===s?'selected':''}>${s}</option>`).join('')}
+            ${['Diproses','Selesai','Dibayar','Gagal Kirim','Batal'].map(s=>`<option ${o.status===s?'selected':''}>${s}</option>`).join('')}
           </select>
         </div>
         <div><label class="label">Stok Action</label>
