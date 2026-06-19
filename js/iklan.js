@@ -134,8 +134,14 @@ const Iklan = {
         return -1;
       };
 
-      const headerRowIdx = rows.findIndex(r => r.some(c => normHeader(c) === 'nama iklan'));
-      if (headerRowIdx === -1) throw new Error('Kolom "Nama Iklan" tidak ditemukan di file. Pastikan ini file export Iklanku dari Shopee Seller Centre.');
+      // File export Iklanku diawali 7 baris info laporan (nama toko, rentang tanggal, dll)
+      // yang kadang berisi sel persis "Nama Iklan" sebagai label (mis. "Nama Iklan,Semua")
+      // — itu bikin baris header kolom asli (baris ke-8 / index 7) salah terdeteksi.
+      // Maka pencarian header kolom dimulai dari index 7, bukan dari awal file.
+      const HEADER_SKIP_ROWS = 7;
+      const headerOffsetIdx = rows.slice(HEADER_SKIP_ROWS).findIndex(r => r.some(c => normHeader(c) === 'nama iklan'));
+      if (headerOffsetIdx === -1) throw new Error('Kolom "Nama Iklan" tidak ditemukan di file. Pastikan ini file export Iklanku dari Shopee Seller Centre.');
+      const headerRowIdx = HEADER_SKIP_ROWS + headerOffsetIdx;
       const headerRow = rows[headerRowIdx];
 
       const colName  = findColIdx(headerRow, 'nama iklan');
