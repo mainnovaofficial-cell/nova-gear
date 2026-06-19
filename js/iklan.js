@@ -111,16 +111,30 @@ const Iklan = {
       const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
 
       const normHeader = h => String(h || '').replace(/ /g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+      // Header Iklanku punya banyak kolom mirip ("Biaya" vs "Biaya per Konversi" vs
+      // "Persentase Biaya Iklan terhadap Penjualan") — cocokkan exact match dulu,
+      // baru startsWith, baru substring, supaya "biaya" tidak nyangkut ke "biaya per konversi".
       const findColIdx = (headerRow, ...terms) => {
+        const normed = headerRow.map(normHeader);
         for (const term of terms) {
           const t = normHeader(term);
-          const idx = headerRow.findIndex(h => normHeader(h).includes(t));
+          const idx = normed.findIndex(h => h === t);
+          if (idx !== -1) return idx;
+        }
+        for (const term of terms) {
+          const t = normHeader(term);
+          const idx = normed.findIndex(h => h.startsWith(t));
+          if (idx !== -1) return idx;
+        }
+        for (const term of terms) {
+          const t = normHeader(term);
+          const idx = normed.findIndex(h => h.includes(t));
           if (idx !== -1) return idx;
         }
         return -1;
       };
 
-      const headerRowIdx = rows.findIndex(r => r.some(c => normHeader(c).includes('nama iklan')));
+      const headerRowIdx = rows.findIndex(r => r.some(c => normHeader(c) === 'nama iklan'));
       if (headerRowIdx === -1) throw new Error('Kolom "Nama Iklan" tidak ditemukan di file. Pastikan ini file export Iklanku dari Shopee Seller Centre.');
       const headerRow = rows[headerRowIdx];
 
@@ -128,7 +142,7 @@ const Iklan = {
       const colBiaya = findColIdx(headerRow, 'biaya');
       const colKonv  = findColIdx(headerRow, 'konversi');
       const colOmzet = findColIdx(headerRow, 'omzet penjualan', 'omzet');
-      const colAcos  = findColIdx(headerRow, 'persentase biaya iklan terhadap penjualan', 'acos');
+      const colAcos  = findColIdx(headerRow, 'persentase biaya iklan terhadap penjualan dari iklan (acos)', 'persentase biaya iklan terhadap penjualan', 'acos');
 
       const records = [];
       for (let i = headerRowIdx + 1; i < rows.length; i++) {
