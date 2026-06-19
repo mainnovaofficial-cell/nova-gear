@@ -1350,7 +1350,7 @@ const Penjualan = {
         <div class="col-span-2"><label class="label">Nama Produk *</label><input id="m-name" class="input" value="${o.product_name||''}" placeholder="Nama produk"/></div>
         <div><label class="label">SKU</label><input id="m-sku" class="input" value="${o.sku||''}" placeholder="SKU"/></div>
         <div><label class="label">Variasi</label><input id="m-var" class="input" value="${o.variation||''}" placeholder="Opsional"/></div>
-        <div><label class="label">Qty *</label><input id="m-qty" type="number" min="1" class="input" value="${o.qty||1}"/></div>
+        <div><label class="label">Qty *</label><input id="m-qty" type="number" min="1" class="input" value="${o.qty||1}" oninput="Penjualan._calcManual()"/></div>
         <div><label class="label">Harga Jual (Rp) *</label><input id="m-price" type="number" class="input" value="${o.selling_price||''}" placeholder="0" oninput="Penjualan._calcManual()"/></div>
         <div><label class="label">Omzet / Total (Rp)</label><input id="m-gross" type="number" class="input" value="${o.gross_revenue||''}" placeholder="Otomatis dari qty × harga"/></div>
         <div><label class="label">Net Diterima (Rp)</label><input id="m-net" type="number" class="input" value="${o.net_revenue||''}" placeholder="Setelah potongan"/></div>
@@ -1387,7 +1387,7 @@ const Penjualan = {
     const qty   = +document.getElementById('m-qty')?.value   || 1;
     const price = +document.getElementById('m-price')?.value || 0;
     const gross = document.getElementById('m-gross');
-    if (gross && !gross.value) gross.value = qty * price;
+    if (gross) gross.value = qty * price;
   },
 
   async saveManual(id) {
