@@ -274,11 +274,35 @@ const App = {
         ? 'px-2.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-100 rounded-full text-xs font-medium'
         : 'px-2.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-100 rounded-full text-xs font-medium';
 
+    // Admin hanya lihat menu Dashboard, Penjualan, Scanner Packing, Stok di sidebar.
+    document.querySelectorAll('.nav-item').forEach(el => {
+      const allowed = role === 'owner' || this.ADMIN_ALLOWED_PAGES.includes(el.dataset.page);
+      el.classList.toggle('hidden', !allowed);
+    });
+    // Section header (mis. "Keuangan") adalah sibling SEBELUM nav-item-nya, bukan wrapper —
+    // sembunyikan juga kalau semua nav-item di bawahnya (sampai header section berikutnya) tersembunyi.
+    document.querySelectorAll('.nav-section').forEach(header => {
+      let hasVisibleItem = false;
+      let sib = header.nextElementSibling;
+      while (sib && !sib.classList.contains('nav-section')) {
+        if (sib.classList.contains('nav-item') && !sib.classList.contains('hidden')) hasVisibleItem = true;
+        sib = sib.nextElementSibling;
+      }
+      header.classList.toggle('hidden', !hasVisibleItem);
+    });
+
     this.navigate('dashboard');
   },
 
   /* ── Routing ── */
   navigate(page) {
+    // Admin hanya boleh akses halaman tertentu — cegah akses langsung (mis. lewat sidebar
+    // yang tersembunyi tapi sempat ter-klik, atau panggilan navigate() manual).
+    if (this.isAdmin() && !this.ADMIN_ALLOWED_PAGES.includes(page)) {
+      this.toast('Halaman ini hanya untuk Owner.', 'warning');
+      page = 'dashboard';
+    }
+
     // Hide all pages
     document.querySelectorAll('.page').forEach(el => el.classList.add('hidden'));
 
@@ -493,6 +517,13 @@ const App = {
     }
     return true;
   },
+
+  isAdmin() {
+    return AppState.user?.role === 'admin';
+  },
+
+  // Halaman yang boleh diakses role Admin — selain ini otomatis dialihkan ke Dashboard.
+  ADMIN_ALLOWED_PAGES: ['dashboard', 'penjualan', 'scanner', 'stok'],
 
   _updateClock() {
     const el = document.getElementById('current-datetime');

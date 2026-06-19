@@ -103,6 +103,10 @@ const Dashboard = {
       expMap[e] = (expMap[e] || 0) + 1;
     });
 
+    // Admin hanya boleh lihat status pesanan & scanner — data finansial (omzet, laba,
+    // pengeluaran) dan grafik tren disembunyikan, termasuk dari Owner-only Row 1/3/Rincian.
+    const isAdmin = App.isAdmin();
+
     el.innerHTML = `
       <div class="page-header">
         <div>
@@ -115,6 +119,7 @@ const Dashboard = {
         </button>
       </div>
 
+      ${isAdmin ? '' : `
       <!-- Row 1: Financial -->
       <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-5">
         ${this._bigCard('Omzet', App.formatRupiah(omzet), 'Total penjualan kotor', 'bg-emerald-50','text-emerald-600','M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 6v1m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z')}
@@ -122,7 +127,7 @@ const Dashboard = {
         ${this._bigCard('Total Pengeluaran', App.formatRupiah(totalExp), 'HPP + Iklan + Operasional', 'bg-amber-50','text-amber-600','M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z')}
         ${this._bigCard('Laba Bersih', App.formatRupiah(labaB), 'Net − HPP − Iklan − Ops', labaB>=0?'bg-green-50':'bg-red-50', labaB>=0?'text-green-600':'text-red-600','M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z')}
         ${this._bigCard('Sisa Kas', App.formatRupiah(sisaKas), 'Modal + Net − Pengeluaran', sisaKas>=0?'bg-sky-50':'bg-red-50', sisaKas>=0?'text-sky-600':'text-red-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
-      </div>
+      </div>`}
 
       <!-- Row 2: Order Status -->
       <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 mb-5">
@@ -135,6 +140,7 @@ const Dashboard = {
         ${this._miniCard('Return Rate', returnRate + '%', 'bg-purple-50 border-purple-100', 'text-purple-700')}
       </div>
 
+      ${isAdmin ? '' : `
       <!-- Row 3: Charts -->
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
         <div class="card lg:col-span-2">
@@ -149,10 +155,10 @@ const Dashboard = {
           </div>
           <div style="height:190px;position:relative"><canvas id="chart-status"></canvas></div>
         </div>
-      </div>
+      </div>`}
 
       <!-- Row 4: Scanner + Expense breakdown -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="grid grid-cols-1 ${isAdmin ? '' : 'lg:grid-cols-2'} gap-4">
         <div class="card">
           <div class="card-header">
             <span class="card-title">Scanner Hari Ini</span>
@@ -166,6 +172,7 @@ const Dashboard = {
                   <span class="badge badge-blue">${c} paket</span>
                 </div>`).join('')}</div>`}
         </div>
+        ${isAdmin ? '' : `
         <div class="card">
           <div class="card-header">
             <span class="card-title">Rincian Pengeluaran</span>
@@ -179,11 +186,13 @@ const Dashboard = {
             <span class="text-sm font-semibold text-gray-700">Total</span>
             <span class="font-bold text-money">${App.formatRupiah(totalExp)}</span>
           </div>
-        </div>
+        </div>`}
       </div>`;
 
-    this._initChartRevenue(days, dailyMap);
-    this._initChartStatus(selesai.length, batal.length, gagal.length, retur.length);
+    if (!isAdmin) {
+      this._initChartRevenue(days, dailyMap);
+      this._initChartStatus(selesai.length, batal.length, gagal.length, retur.length);
+    }
   },
 
   _bigCard(title, value, sub, bg, tc, path) {
