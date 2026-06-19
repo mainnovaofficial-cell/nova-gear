@@ -26,6 +26,7 @@ const Dashboard = {
       { data: opData,    error: e4 },
       { data: scanToday, error: e5 },
       { data: releases,  error: e6 },
+      { data: adsImport, error: e7 },
     ] = await Promise.all([
       db.from('orders').select('status,gross_revenue,net_revenue,shopee_commission,shopee_service_fee,shopee_ads_fee,shopee_other_fee,order_date,expedition,created_at,qty,sku'),
       db.from('hpp_items').select('sku,cost_per_unit,created_at').order('created_at', { ascending: false }),
@@ -33,8 +34,9 @@ const Dashboard = {
       db.from('operational').select('cost'),
       db.from('scan_logs').select('id,expedition,is_cancelled,scan_date').eq('scan_date', App.todayISO()),
       db.from('income_releases').select('gross_amount,discount,voucher_seller,net_amount'),
+      db.from('ads_expenses').select('biaya'),
     ]);
-    if (e1 || e2 || e3 || e4 || e5 || e6) throw new Error((e1||e2||e3||e4||e5||e6).message);
+    if (e1 || e2 || e3 || e4 || e5 || e6 || e7) throw new Error((e1||e2||e3||e4||e5||e6||e7).message);
 
     const settings  = await App.getSettings();
     const modalAwal = parseFloat(settings.modal_awal || 0);
@@ -74,7 +76,7 @@ const Dashboard = {
       return s + (App.isFreebieSku(o.sku) ? qty * freebieDefault : qty * App.resolveHppUnit(hppMap, o.sku));
     }, 0);
 
-    const totalAds  = sum(adsData  || [], 'cost');
+    const totalAds  = sum(adsData  || [], 'cost') + sum(adsImport || [], 'biaya');
     const totalOp   = sum(opData   || [], 'cost');
     const totalExp  = totalHPP + totalAds + totalOp;
     const labaB     = netRev - totalExp;

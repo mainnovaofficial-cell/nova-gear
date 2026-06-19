@@ -410,6 +410,26 @@ create index if not exists income_releases_order_no_idx     on income_releases(o
 -- untuk kolom status (kolom text sudah ada sejak awal).
 
 -- ═══════════════════════════════════════════════════════
+--  MIGRASI v9 — Import Iklan Shopee (Iklanku, per produk per bulan)
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+create table if not exists ads_expenses (
+  id            uuid primary key default gen_random_uuid(),
+  month         integer not null,
+  year          integer not null,
+  product_name  text not null,
+  biaya         numeric(14,2) default 0,
+  konversi      integer default 0,
+  omzet_iklan   numeric(14,2) default 0,
+  acos          numeric(6,2) default 0,
+  created_at    timestamptz default now(),
+  unique (month, year, product_name)
+);
+
+create index if not exists ads_expenses_month_year_idx on ads_expenses(month, year);
+
+-- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup
 --  Untuk production, gunakan Supabase Auth + RLS policies.
 --  Untuk sementara (anon key): disable RLS di table settings.
@@ -421,6 +441,7 @@ create index if not exists income_releases_order_no_idx     on income_releases(o
 -- alter table hpp_batches enable row level security;
 -- alter table hpp_items   enable row level security;
 -- alter table ads         enable row level security;
+-- alter table ads_expenses enable row level security;
 -- alter table operational enable row level security;
 -- alter table settings    enable row level security;
 
@@ -430,5 +451,6 @@ create index if not exists income_releases_order_no_idx     on income_releases(o
 -- create policy "allow_all" on hpp_batches for all using (true) with check (true);
 -- create policy "allow_all" on hpp_items   for all using (true) with check (true);
 -- create policy "allow_all" on ads         for all using (true) with check (true);
+-- create policy "allow_all" on ads_expenses for all using (true) with check (true);
 -- create policy "allow_all" on operational for all using (true) with check (true);
 -- create policy "allow_all" on settings    for all using (true) with check (true);

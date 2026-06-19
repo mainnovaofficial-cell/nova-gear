@@ -81,12 +81,14 @@ const LabaRugi = {
       });
 
       // ── 4. Ads & Operasional bulan ini ──
-      const [{ data: ads, error: adsErr }, { data: ops, error: opsErr }] = await Promise.all([
+      const [{ data: ads, error: adsErr }, { data: ops, error: opsErr }, { data: adsImport, error: adsImpErr }] = await Promise.all([
         db.from('ads').select('cost,ad_date').gte('ad_date', dateFrom).lt('ad_date', dateTo),
         db.from('operational').select('cost,op_date').gte('op_date', dateFrom).lt('op_date', dateTo),
+        db.from('ads_expenses').select('biaya').eq('month', bulan).eq('year', tahun),
       ]);
       if (adsErr) throw adsErr;
       if (opsErr) throw opsErr;
+      if (adsImpErr) throw adsImpErr;
 
       const sum = (arr, key) => (arr || []).reduce((s, r) => s + (+r[key] || 0), 0);
 
@@ -112,7 +114,7 @@ const LabaRugi = {
       const totalHPP  = totalHPPBarang + totalFreebie;
       const labaKotor = netRev - totalHPP;
 
-      const totalAds   = sum(ads, 'cost');
+      const totalAds   = sum(ads, 'cost') + sum(adsImport, 'biaya');
       const totalOps   = sum(ops, 'cost');
       const totalBeban = totalAds + totalOps;
 
