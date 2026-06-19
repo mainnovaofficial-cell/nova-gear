@@ -41,6 +41,20 @@ const Analisis = {
   /* ═══════════════════════════════════════════════
      MODE 1 — AKTUAL (dari income_releases & orders)
   ═══════════════════════════════════════════════ */
+
+  // Sebagian pesanan lama Lampu Monitor tersimpan dengan kolom SKU berisi nama
+  // produk panjang ("...Light Bar...") bukan kode SKU asli "CN-LM" — tanpa
+  // normalisasi ini, baris itu pecah jadi grup terpisah di tabel Analisis Produk.
+  _normalizeProduct(sku, productName) {
+    const skuStr  = String(sku || '').trim();
+    const nameStr = String(productName || '').trim();
+    if (/light bar/i.test(skuStr) || /light bar/i.test(nameStr)) {
+      return { sku: 'CN-LM', name: 'Lampu Monitor' };
+    }
+    const finalSku = skuStr || nameStr || 'TANPA-SKU';
+    return { sku: finalSku, name: nameStr || finalSku };
+  },
+
   async _load() {
     const db = App.db();
     const [{ data: orders }, { data: releases }, { data: hpp }, settings] = await Promise.all([
@@ -81,8 +95,8 @@ const Analisis = {
     // Build per-SKU aggregate
     const skuMap = {};
     soldLines.forEach(o => {
-      const k = o.sku || o.product_name || 'TANPA-SKU';
-      if (!skuMap[k]) skuMap[k] = { sku: k, name: o.product_name || k, sold: 0, gross: 0, potongan: 0, net: 0 };
+      const { sku: k, name: productName } = this._normalizeProduct(o.sku, o.product_name);
+      if (!skuMap[k]) skuMap[k] = { sku: k, name: productName, sold: 0, gross: 0, potongan: 0, net: 0 };
 
       const key       = o.order_no || o.product_name;
       const orderTotal = orderGrossTotal[key] || 0;
@@ -107,7 +121,10 @@ const Analisis = {
       const hppTotal = p.sold * hppUnit;
       const profit   = p.net - hppTotal;
       const marginPct = hppTotal > 0 ? (profit / hppTotal * 100) : (profit > 0 ? 100 : 0);
-      return { ...p, hppUnit, hppTotal, profit, marginPct };
+      // Cap potongan supaya tidak melebihi omzet produk ini sendiri — alokasi proporsional
+      // bisa meleset kalau gross_revenue per baris pesanan 0/tidak lengkap (fallback equal-split).
+      const potongan = p.gross > 0 ? Math.max(p.potongan, -p.gross) : p.potongan;
+      return { ...p, potongan, hppUnit, hppTotal, profit, marginPct };
     });
 
     // Group per Nama Produk (gabung semua varian SKU)
@@ -209,7 +226,10 @@ const Analisis = {
         <tbody>${data.map(p => {
           const expanded = this._expanded.has(p.name);
           const hasMulti = p.skus.length > 1;
-          const arrow = `<button onclick="Analisis._toggleExpand('${p.name.replace(/'/g, "\\'")}')" class="text-gray-400 hover:text-gray-700 transition-transform ${expanded ? 'rotate-90' : ''} inline-block">▶</button>`;
+          // stopPropagation di sini wajib — tombol ini ada di dalam <tr> yang juga punya
+          // onclick toggle sendiri. Tanpa ini, klik tombol akan toggle 2x (bubbling ke tr)
+          // dan balik ke state semula, jadi terlihat seperti tombol expand tidak berfungsi.
+          const arrow = `<button onclick="event.stopPropagation(); Analisis._toggleExpand('${p.name.replace(/'/g, "\\'")}')" class="text-gray-400 hover:text-gray-700 transition-transform ${expanded ? 'rotate-90' : ''} inline-block">▶</button>`;
           const mainRow = `<tr class="cursor-pointer" onclick="Analisis._toggleExpand('${p.name.replace(/'/g, "\\'")}')">
             <td class="text-center">${arrow}</td>
             <td class="font-medium max-w-[200px] truncate" title="${p.name}">${p.name}${hasMulti ? ` <span class="badge badge-blue">${p.skus.length} varian</span>` : ''}</td>
