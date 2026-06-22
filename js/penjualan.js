@@ -226,11 +226,11 @@ const Penjualan = {
               class="text-xs text-orange-400 hover:text-orange-600 transition-colors font-medium whitespace-nowrap">
         Batalkan
       </button>`;
-    const editBtn = (o) => !o.order_no ? `
+    const editBtn = (o) => `
       <button onclick="Penjualan.openEditManual('${o.id}')"
               class="text-xs text-blue-400 hover:text-blue-600 transition-colors font-medium whitespace-nowrap">
         Edit
-      </button>` : '';
+      </button>`;
 
     const groups = [];
     const groupMap = {};
@@ -265,7 +265,7 @@ const Penjualan = {
           <td>${isFirst ? statusBadge(o.status) : ''}</td>
           <td>${isFirst ? this._stokActionBadge(o.stok_action) : ''}</td>
           <td>${isFirst ? `<span class="badge ${o.source==='offline'?'badge-orange':'badge-blue'}">${o.source||'shopee'}</span>` : ''}</td>
-          <td>${isFirst ? `${batalBtn(o.id, o.status)} ${editBtn(o)}` : ''}</td>
+          <td>${isFirst ? batalBtn(o.id, o.status) : ''} ${editBtn(o)}</td>
         </tr>`;
       });
     });
