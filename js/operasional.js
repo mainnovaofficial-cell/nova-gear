@@ -37,7 +37,9 @@ const Operasional = {
   },
 
   async _load() {
-    const { data, error } = await App.db().from('operational').select('*').order('op_date', { ascending: false });
+    let query = App.db().from('operational').select('*').order('op_date', { ascending: false });
+    if (App.isAdmin()) query = query.eq('created_by', 'admin');
+    const { data, error } = await query;
     if (error) { App.toast('Gagal memuat operasional.', 'error'); return; }
     this._data = data || [];
     this._renderSummary();
@@ -139,6 +141,7 @@ const Operasional = {
       cost,
       recurring:   document.getElementById('op-recurring').checked,
       notes:       document.getElementById('op-notes').value.trim() || null,
+      created_by:  App.isAdmin() ? 'admin' : 'owner',
     };
     const { error } = await App.db().from('operational').insert(payload);
     if (error) { App.toast('Error: ' + error.message, 'error'); return; }

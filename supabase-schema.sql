@@ -430,6 +430,18 @@ create table if not exists ads_expenses (
 create index if not exists ads_expenses_month_year_idx on ads_expenses(month, year);
 
 -- ═══════════════════════════════════════════════════════
+--  MIGRASI — Filter Operasional per Role
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- Tandai siapa yang input biaya operasional ('owner' | 'admin'), supaya
+-- Admin hanya bisa lihat data yang diinput Admin sendiri, Owner lihat semua.
+alter table operational add column if not exists created_by text;
+
+-- Data lama (sebelum kolom ini ada) dianggap diinput Owner.
+update operational set created_by = 'owner' where created_by is null;
+
+-- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup
 --  Untuk production, gunakan Supabase Auth + RLS policies.
 --  Untuk sementara (anon key): disable RLS di table settings.

@@ -523,7 +523,7 @@ const App = {
   },
 
   // Halaman yang boleh diakses role Admin — selain ini otomatis dialihkan ke Dashboard.
-  ADMIN_ALLOWED_PAGES: ['dashboard', 'penjualan', 'scanner', 'stok'],
+  ADMIN_ALLOWED_PAGES: ['dashboard', 'penjualan', 'scanner', 'stok', 'operasional'],
 
   _updateClock() {
     const el = document.getElementById('current-datetime');
