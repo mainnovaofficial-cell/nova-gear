@@ -1422,6 +1422,19 @@ const Penjualan = {
       if (id) {
         const { error } = await App.db().from('orders').update(payload).eq('id', id);
         if (error) throw error;
+      } else if (payload.order_no && payload.sku) {
+        // Kombinasi No. Pesanan + SKU punya unique index parsial di DB —
+        // cek manual dulu supaya bisa update kalau sudah ada, insert kalau belum.
+        const { data: existing, error: findError } = await App.db().from('orders')
+          .select('id').eq('order_no', payload.order_no).eq('sku', payload.sku).maybeSingle();
+        if (findError) throw findError;
+        if (existing) {
+          const { error } = await App.db().from('orders').update(payload).eq('id', existing.id);
+          if (error) throw error;
+        } else {
+          const { error } = await App.db().from('orders').insert(payload);
+          if (error) throw error;
+        }
       } else {
         const { error } = await App.db().from('orders').insert(payload);
         if (error) throw error;
