@@ -1350,9 +1350,10 @@ const Penjualan = {
   },
 
   openManual(order = null) {
-    const o = order || {};
+    if (!order) return this.openManualMulti();
+    const o = order;
     App.openModal({
-      title: order ? 'Edit Pesanan' : 'Tambah Pesanan Manual',
+      title: 'Edit Pesanan',
       size: 'max-w-2xl',
       body: `
       <div class="grid grid-cols-2 gap-4">
@@ -1390,8 +1391,147 @@ const Penjualan = {
       </div>`,
       footer: `
         <button onclick="App.closeModal()" class="btn-secondary">Batal</button>
-        <button onclick="Penjualan.saveManual(${order ? `'${order.id}'` : 'null'})" class="btn-primary">Simpan</button>`,
+        <button onclick="Penjualan.saveManual('${order.id}')" class="btn-primary">Simpan</button>`,
     });
+  },
+
+  /* ═══════════════════════════════════════════════
+     TAMBAH MANUAL — MULTI-SKU (1 pesanan, beberapa produk)
+  ═══════════════════════════════════════════════ */
+  openManualMulti() {
+    this._manualRows = [{ sku: '', name: '', variation: '', qty: 1, price: '' }];
+    App.openModal({
+      title: 'Tambah Pesanan Manual',
+      size: 'max-w-4xl',
+      body: `
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
+        <div><label class="label">No. Pesanan</label><input id="mm-order-no" class="input" placeholder="Optional"/></div>
+        <div><label class="label">Tanggal</label><input id="mm-date" type="date" class="input" value="${App.todayISO()}"/></div>
+        <div><label class="label">Ekspedisi</label><input id="mm-exp" class="input" placeholder="JNE, J&T, dll"/></div>
+        <div><label class="label">Status *</label>
+          <select id="mm-status" class="input">
+            ${['Diproses','Selesai','Gagal Kirim','Batal'].map(s=>`<option>${s}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="flex items-center justify-between mb-2">
+        <span class="label !mb-0">Produk</span>
+        <button onclick="Penjualan._addManualRow()" class="btn-secondary text-xs !py-1">+ Tambah Produk</button>
+      </div>
+      <div id="mm-rows" class="space-y-2 mb-3"></div>
+      <div class="text-right text-sm font-semibold">Omzet Total: <span id="mm-total" class="text-money">Rp 0</span></div>`,
+      footer: `
+        <button onclick="App.closeModal()" class="btn-secondary">Batal</button>
+        <button onclick="Penjualan.saveManualMulti()" class="btn-primary">Simpan</button>`,
+    });
+    this._renderManualRows();
+  },
+
+  _renderManualRows() {
+    const el = document.getElementById('mm-rows');
+    if (!el) return;
+    el.innerHTML = this._manualRows.map((r, i) => `
+      <div class="grid grid-cols-12 gap-2 items-end">
+        <div class="col-span-2"><label class="label text-xs">SKU</label><input id="mm-sku-${i}" class="input" value="${r.sku}" placeholder="SKU" oninput="Penjualan._updateManualRow(${i})"/></div>
+        <div class="col-span-4"><label class="label text-xs">Nama Produk *</label><input id="mm-name-${i}" class="input" value="${r.name}" placeholder="Nama produk" oninput="Penjualan._updateManualRow(${i})"/></div>
+        <div class="col-span-2"><label class="label text-xs">Variasi</label><input id="mm-var-${i}" class="input" value="${r.variation}" placeholder="Opsional" oninput="Penjualan._updateManualRow(${i})"/></div>
+        <div class="col-span-1"><label class="label text-xs">Qty *</label><input id="mm-qty-${i}" type="number" min="1" class="input" value="${r.qty}" oninput="Penjualan._updateManualRow(${i})"/></div>
+        <div class="col-span-2"><label class="label text-xs">Harga (Rp) *</label><input id="mm-price-${i}" type="text" inputmode="decimal" class="input" value="${r.price}" placeholder="0" oninput="Penjualan._updateManualRow(${i})"/></div>
+        <div class="col-span-1 pb-1.5 text-right">${this._manualRows.length > 1 ? `<button onclick="Penjualan._removeManualRow(${i})" class="text-red-400 hover:text-red-600 text-xs font-medium">Hapus</button>` : ''}</div>
+      </div>`).join('');
+    this._calcManualMultiTotal();
+  },
+
+  _updateManualRow(i) {
+    const r = this._manualRows[i];
+    if (!r) return;
+    r.sku       = document.getElementById(`mm-sku-${i}`)?.value.trim() || '';
+    r.name      = document.getElementById(`mm-name-${i}`)?.value.trim() || '';
+    r.variation = document.getElementById(`mm-var-${i}`)?.value.trim() || '';
+    r.qty       = +document.getElementById(`mm-qty-${i}`)?.value || 1;
+    r.price     = document.getElementById(`mm-price-${i}`)?.value || '';
+    this._calcManualMultiTotal();
+  },
+
+  _addManualRow() {
+    this._manualRows.push({ sku: '', name: '', variation: '', qty: 1, price: '' });
+    this._renderManualRows();
+  },
+
+  _removeManualRow(i) {
+    if (this._manualRows.length <= 1) return;
+    this._manualRows.splice(i, 1);
+    this._renderManualRows();
+  },
+
+  _calcManualMultiTotal() {
+    const total = this._manualRows.reduce((s, r) => s + (+r.qty || 1) * this._stripPrice(r.price), 0);
+    const el = document.getElementById('mm-total');
+    if (el) el.textContent = App.formatRupiah(total);
+  },
+
+  async saveManualMulti() {
+    const orderNo    = document.getElementById('mm-order-no').value.trim() || null;
+    const orderDate  = document.getElementById('mm-date').value;
+    const expedition = document.getElementById('mm-exp').value.trim();
+    const status     = document.getElementById('mm-status').value;
+
+    const rows = this._manualRows
+      .map(r => ({
+        sku:          r.sku,
+        product_name: r.name,
+        variation:    r.variation,
+        qty:          +r.qty || 1,
+        price:        this._stripPrice(r.price),
+      }))
+      .filter(r => r.product_name && r.price);
+
+    if (!rows.length) { App.toast('Minimal 1 produk dengan nama & harga wajib diisi.', 'warning'); return; }
+
+    try {
+      for (const r of rows) {
+        const gross   = r.qty * r.price;
+        const payload = {
+          order_no:      orderNo,
+          order_date:    orderDate,
+          product_name:  r.product_name,
+          sku:           r.sku,
+          variation:     r.variation,
+          qty:           r.qty,
+          selling_price: r.price,
+          gross_revenue: gross,
+          net_revenue:   gross,
+          expedition,
+          status,
+          stok_action:   this._determineStokAction(status, ''),
+          source:        'shopee',
+          notes:         '',
+        };
+
+        let updated = false;
+        if (orderNo && r.sku) {
+          const { data: existing, error: findError } = await App.db().from('orders')
+            .select('id').eq('order_no', orderNo).eq('sku', r.sku).maybeSingle();
+          if (findError) throw findError;
+          if (existing) {
+            const { error } = await App.db().from('orders').update(payload).eq('id', existing.id);
+            if (error) throw error;
+            updated = true;
+          }
+        }
+        if (!updated) {
+          const { error } = await App.db().from('orders').insert(payload);
+          if (error) throw error;
+        }
+      }
+      App.closeModal();
+      App.toast(`Pesanan disimpan (${rows.length} produk)!`, 'success');
+      await this._loadOrders();
+      this._renderTab();
+      this._updateReviewBadge();
+    } catch (err) {
+      App.toast('Error: ' + err.message, 'error');
+    }
   },
 
   // Strip pemisah ribuan "." dan "," dari input harga sebelum dipakai sebagai angka —
