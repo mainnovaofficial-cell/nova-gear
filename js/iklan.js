@@ -35,6 +35,7 @@ const Iklan = {
           </select>
           <input id="ik-tahun" type="number" class="input !py-1 text-xs w-24" value="${now.getFullYear()}" min="2020" max="2035"/>
           <button onclick="Iklan._loadExpenses()" class="btn-secondary text-xs !py-1">Tampilkan</button>
+          <button onclick="Iklan._deleteExpensesMonth()" class="btn-secondary text-xs !py-1 text-red-600">Hapus Data Bulan Ini</button>
         </div>
       </div>
       <div id="iklan-exp-summary" class="grid grid-cols-1 sm:max-w-xs gap-3 mb-4"></div>
@@ -210,6 +211,17 @@ const Iklan = {
     if (error) { App.toast('Gagal memuat data iklan: ' + error.message, 'error'); return; }
     this._expenses = data || [];
     this._renderExpenses();
+  },
+
+  async _deleteExpensesMonth() {
+    const bulan = parseInt(document.getElementById('ik-bulan')?.value) || (new Date().getMonth() + 1);
+    const tahun = parseInt(document.getElementById('ik-tahun')?.value) || new Date().getFullYear();
+    const ok = await App.confirm(`Hapus semua data iklan Shopee per produk untuk ${this._bulanNames[bulan]} ${tahun}? Tindakan ini tidak dapat dibatalkan.`);
+    if (!ok) return;
+    const { error } = await App.db().from('ads_expenses').delete().eq('month', bulan).eq('year', tahun);
+    if (error) { App.toast('Gagal hapus: ' + error.message, 'error'); return; }
+    App.toast('Data iklan bulan ini dihapus.', 'success');
+    await this._loadExpenses();
   },
 
   _renderExpenses() {
