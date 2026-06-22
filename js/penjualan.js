@@ -226,6 +226,11 @@ const Penjualan = {
               class="text-xs text-orange-400 hover:text-orange-600 transition-colors font-medium whitespace-nowrap">
         Batalkan
       </button>`;
+    const editBtn = (o) => !o.order_no ? `
+      <button onclick="Penjualan.openEditManual('${o.id}')"
+              class="text-xs text-blue-400 hover:text-blue-600 transition-colors font-medium whitespace-nowrap">
+        Edit
+      </button>` : '';
 
     const groups = [];
     const groupMap = {};
@@ -260,7 +265,7 @@ const Penjualan = {
           <td>${isFirst ? statusBadge(o.status) : ''}</td>
           <td>${isFirst ? this._stokActionBadge(o.stok_action) : ''}</td>
           <td>${isFirst ? `<span class="badge ${o.source==='offline'?'badge-orange':'badge-blue'}">${o.source||'shopee'}</span>` : ''}</td>
-          <td>${isFirst ? batalBtn(o.id, o.status) : ''}</td>
+          <td>${isFirst ? `${batalBtn(o.id, o.status)} ${editBtn(o)}` : ''}</td>
         </tr>`;
       });
     });
@@ -1338,6 +1343,12 @@ const Penjualan = {
   /* ═══════════════════════════════════════════════
      TAMBAH / EDIT MANUAL
   ═══════════════════════════════════════════════ */
+  openEditManual(id) {
+    const order = this._orders.find(o => o.id === id);
+    if (!order) { App.toast('Pesanan tidak ditemukan.', 'error'); return; }
+    this.openManual(order);
+  },
+
   openManual(order = null) {
     const o = order || {};
     App.openModal({
@@ -1351,9 +1362,9 @@ const Penjualan = {
         <div><label class="label">SKU</label><input id="m-sku" class="input" value="${o.sku||''}" placeholder="SKU"/></div>
         <div><label class="label">Variasi</label><input id="m-var" class="input" value="${o.variation||''}" placeholder="Opsional"/></div>
         <div><label class="label">Qty *</label><input id="m-qty" type="number" min="1" class="input" value="${o.qty||1}" oninput="Penjualan._calcManual()"/></div>
-        <div><label class="label">Harga Jual (Rp) *</label><input id="m-price" type="number" class="input" value="${o.selling_price||''}" placeholder="0" oninput="Penjualan._calcManual()"/></div>
+        <div><label class="label">Harga Jual (Rp) *</label><input id="m-price" type="text" inputmode="decimal" class="input" value="${o.selling_price||''}" placeholder="0" oninput="Penjualan._calcManual()"/></div>
         <div><label class="label">Omzet / Total (Rp)</label><input id="m-gross" type="number" class="input" value="${o.gross_revenue||''}" placeholder="Otomatis dari qty × harga"/></div>
-        <div><label class="label">Net Diterima (Rp)</label><input id="m-net" type="number" class="input" value="${o.net_revenue||''}" placeholder="Setelah potongan"/></div>
+        <div><label class="label">Net Diterima (Rp)</label><input id="m-net" type="text" inputmode="decimal" class="input" value="${o.net_revenue||''}" placeholder="Setelah potongan"/></div>
         <div><label class="label">Ekspedisi</label><input id="m-exp" class="input" value="${o.expedition||''}" placeholder="JNE, J&T, dll"/></div>
         <div><label class="label">Status *</label>
           <select id="m-status" class="input">
@@ -1383,21 +1394,27 @@ const Penjualan = {
     });
   },
 
+  // Strip pemisah ribuan "." dan "," dari input harga sebelum dipakai sebagai angka —
+  // form ini menerima "155.783" / "155,783" / "155783" dan semuanya harus jadi 155783.
+  _stripPrice(v) {
+    return parseInt(String(v ?? '').replace(/[.,]/g, ''), 10) || 0;
+  },
+
   _calcManual() {
-    const qty   = +document.getElementById('m-qty')?.value   || 1;
-    const price = +document.getElementById('m-price')?.value || 0;
+    const qty   = +document.getElementById('m-qty')?.value || 1;
+    const price = this._stripPrice(document.getElementById('m-price')?.value);
     const gross = document.getElementById('m-gross');
     if (gross) gross.value = qty * price;
   },
 
   async saveManual(id) {
     const name  = document.getElementById('m-name').value.trim();
-    const price = +document.getElementById('m-price').value || 0;
+    const price = this._stripPrice(document.getElementById('m-price').value);
     if (!name || !price) { App.toast('Nama produk dan harga wajib diisi.', 'warning'); return; }
 
     const qty       = +document.getElementById('m-qty').value   || 1;
     const gross     = +document.getElementById('m-gross').value || qty * price;
-    const net       = +document.getElementById('m-net').value   || gross;
+    const net       = this._stripPrice(document.getElementById('m-net').value) || gross;
     const status    = document.getElementById('m-status').value;
     const stokInput = document.getElementById('m-stok-action').value;
 
