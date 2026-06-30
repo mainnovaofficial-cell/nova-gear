@@ -37,9 +37,9 @@ const Penjualan = {
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
           Import Mingguan
         </button>
-        <button onclick="Penjualan.openImportRetBatal()" class="btn-secondary text-xs">
+        <button onclick="Penjualan.openImportReturLengkap()" class="btn-secondary text-xs">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8l1 12a2 2 0 002 2h8a2 2 0 002-2L19 8M10 12v4m4-4v4"/></svg>
-          Import Retur/Batal
+          Import Retur Lengkap
         </button>
         <button onclick="Penjualan.openImportIncome()" class="btn-secondary text-xs">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
@@ -68,6 +68,7 @@ const Penjualan = {
           <option>Dibayar</option>
           <option>Gagal Kirim</option>
           <option>Batal</option>
+          <option>Retur</option>
         </select>
         <input id="pj-from" type="date" class="input w-36 !py-1.5 text-xs" onchange="Penjualan._onFilter()"/>
         <input id="pj-to"   type="date" class="input w-36 !py-1.5 text-xs" onchange="Penjualan._onFilter()"/>
@@ -218,7 +219,7 @@ const Penjualan = {
     if (!data.length) return `<div class="empty-state"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg><p>Tidak ada pesanan</p></div>`;
 
     const statusBadge = s => {
-      const m = { Selesai:'badge-green', Dibayar:'badge-emerald', Diproses:'badge-blue', 'Gagal Kirim':'badge-red', Batal:'badge-gray' };
+      const m = { Selesai:'badge-green', Dibayar:'badge-emerald', Diproses:'badge-blue', 'Gagal Kirim':'badge-red', Batal:'badge-gray', Retur:'badge-orange' };
       return `<span class="badge ${m[s]||'badge-gray'}">${s||'-'}</span>`;
     };
     const batalBtn = (id, status) => status === 'Batal' ? '' : `
@@ -300,7 +301,7 @@ const Penjualan = {
     });
     const rows = Object.entries(map);
     if (!rows.length) return `<div class="empty-state"><p>Tidak ada data</p></div>`;
-    const badgeMap = { Selesai:'badge-green', Dibayar:'badge-emerald', Diproses:'badge-blue', 'Gagal Kirim':'badge-red', Batal:'badge-gray' };
+    const badgeMap = { Selesai:'badge-green', Dibayar:'badge-emerald', Diproses:'badge-blue', 'Gagal Kirim':'badge-red', Batal:'badge-gray', Retur:'badge-orange' };
     const totalOrders = new Set(data.map(o => o.order_no || o.id)).size;
     const totalOmzet  = data.reduce((s, o) => s + (+o.gross_revenue||0), 0);
     const totalNet    = Object.values(netByOrder).reduce((s, v) => s + v, 0);
@@ -357,7 +358,7 @@ const Penjualan = {
     const sign      = n => n > 0 ? '+' : '';
 
     const statusBadge = s => {
-      const m = { Selesai:'badge-green', Dibayar:'badge-emerald', Diproses:'badge-blue', 'Gagal Kirim':'badge-red', Batal:'badge-gray' };
+      const m = { Selesai:'badge-green', Dibayar:'badge-emerald', Diproses:'badge-blue', 'Gagal Kirim':'badge-red', Batal:'badge-gray', Retur:'badge-orange' };
       return `<span class="badge ${m[s]||'badge-gray'}">${s||'-'}</span>`;
     };
 
@@ -952,127 +953,229 @@ const Penjualan = {
   },
 
   /* ═══════════════════════════════════════════════
-     2. IMPORT RETUR / BATAL (ZIP berisi 2 xlsx)
+     2. IMPORT RETUR LENGKAP (3 slot xlsx terpisah)
   ═══════════════════════════════════════════════ */
-  openImportRetBatal() {
+  openImportReturLengkap() {
+    const slot = (num, title, path, cols) => `
+      <div class="border border-gray-200 rounded-xl p-4">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-blue-100 text-blue-700 text-xs font-bold flex-shrink-0">${num}</span>
+          <span class="font-medium text-sm text-gray-800">${title}</span>
+          <span class="text-xs text-gray-400 ml-auto">opsional</span>
+        </div>
+        <p class="text-xs text-gray-400 mb-0.5 pl-7">Shopee → Pengembalian/Pembatalan → <strong>${path}</strong> → Export</p>
+        <p class="text-xs text-gray-500 mb-3 pl-7">Kolom: ${cols}</p>
+        <div class="border-2 border-dashed border-gray-200 rounded-lg px-4 py-3 flex items-center gap-2 cursor-pointer
+                    hover:border-blue-300 hover:bg-blue-50/30 transition-colors"
+             onclick="document.getElementById('ret-file-${num}').click()">
+          <svg class="w-4 h-4 text-gray-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+          </svg>
+          <p class="text-xs" id="ret-file-${num}-name"><span class="text-gray-400">Klik untuk pilih file .xlsx</span></p>
+        </div>
+        <input id="ret-file-${num}" type="file" accept=".xlsx,.xls" class="hidden"
+               onchange="Penjualan._setRetFileName(${num}, this)"/>
+      </div>`;
     App.openModal({
-      title: 'Import Retur & Batal / Gagal Kirim',
+      title: 'Import Retur Lengkap',
       size: 'max-w-xl',
       body: `
-        <p class="text-sm text-gray-600 mb-3">Upload file <strong>.zip</strong> dari Shopee yang berisi 2 file .xlsx
-        (cancelled & failed delivery). Deteksi tipe otomatis dari header kolom.</p>
-        <div class="bg-amber-50 border border-amber-100 rounded-lg p-3 text-xs text-amber-800 mb-4 space-y-2">
-          <div>
-            <p class="font-semibold">File Cancelled (Pesanan Dibatalkan) — kategori: Batal</p>
-            <p class="text-amber-700">No. Pesanan · Alasan Pembatalan · SKU · Nama Produk · Subtotal Pesanan · Waktu Pesanan Dibuat</p>
-          </div>
-          <div>
-            <p class="font-semibold">File Failed Delivery (Gagal Kirim) — kategori: Gagal Kirim</p>
-            <p class="text-amber-700">No. Pesanan · Status Pengiriman · SKU · Nama Produk · Subtotal Pesanan</p>
-          </div>
+        <p class="text-sm text-gray-600 mb-4">Upload 1, 2, atau 3 file sekaligus. Semua slot opsional — upload file yang tersedia lalu klik <strong>Proses Semua</strong>.</p>
+        <div class="space-y-3">
+          ${slot(1, 'Pembatalan', 'Pembatalan', 'No. Pesanan, Alasan Pembatalan, SKU Induk, Nama Produk')}
+          ${slot(2, 'Pengiriman Gagal', 'Pengiriman Gagal', 'No. Pesanan, Status pengiriman gagal, SKU')}
+          ${slot(3, 'Pengembalian Barang/Dana', 'Pengembalian Barang/Dana', 'No. Pesanan, SKU Induk/Kode Variasi, Status Pembatalan/Pengembalian, Status Pengembalian Barang, Jumlah Produk Dikembalikan')}
         </div>
-        <div class="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer
-                    hover:border-amber-300 hover:bg-amber-50/30 transition-colors"
-             onclick="document.getElementById('imp-ret-file').click()">
-          <svg class="w-10 h-10 text-gray-300 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-              d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8l1 12a2 2 0 002 2h8a2 2 0 002-2L19 8M10 12v4m4-4v4"/>
-          </svg>
-          <p class="text-sm text-gray-500">Klik atau seret file .zip ke sini</p>
-          <input id="imp-ret-file" type="file" accept=".zip" class="hidden"
-                 onchange="Penjualan.importRetBatalFile(this.files[0])"/>
-        </div>
-        <div id="ret-progress" class="hidden mt-4 text-sm text-amber-600 text-center font-medium"></div>
+        <div id="ret-progress" class="hidden mt-4 text-sm text-blue-600 text-center font-medium"></div>
         <div id="ret-result"   class="hidden mt-3 p-3 rounded-lg text-sm"></div>`,
+      footer: `
+        <button onclick="App.closeModal()" class="btn-secondary">Batal</button>
+        <button onclick="Penjualan.prosesReturLengkap()" class="btn-primary">Proses Semua</button>`,
     });
   },
 
-  async importRetBatalFile(file) {
-    if (!file) return;
+  _setRetFileName(num, input) {
+    const el = document.getElementById(`ret-file-${num}-name`);
+    if (el && input.files[0]) {
+      el.innerHTML = `<span class="text-blue-600 font-medium">${input.files[0].name}</span>`;
+    }
+  },
+
+  async prosesReturLengkap() {
+    const f1 = document.getElementById('ret-file-1')?.files[0];
+    const f2 = document.getElementById('ret-file-2')?.files[0];
+    const f3 = document.getElementById('ret-file-3')?.files[0];
+    if (!f1 && !f2 && !f3) { App.toast('Pilih minimal 1 file untuk diproses.', 'warning'); return; }
+
     const prog = document.getElementById('ret-progress');
     const res  = document.getElementById('ret-result');
-    prog.textContent = 'Membaca file ZIP...';
     prog.classList.remove('hidden');
     res.classList.add('hidden');
 
+    const readXlsx = async file => {
+      const buf = await file.arrayBuffer();
+      const wb  = XLSX.read(buf, { type: 'array', cellDates: true });
+      return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { raw: false, defval: '' });
+    };
+
     try {
-      if (typeof JSZip === 'undefined') throw new Error('Library JSZip belum dimuat. Coba reload halaman.');
+      const records = [];
 
-      const zip     = await JSZip.loadAsync(file);
-      const entries = Object.values(zip.files).filter(f => !f.dir && /\.(xlsx|xls)$/i.test(f.name));
-
-      if (!entries.length) throw new Error('Tidak ada file .xlsx di dalam ZIP.');
-
-      const col    = this._col.bind(this);
-      const toNum  = this._toNum.bind(this);
-      const toDate = this._toDate.bind(this);
-      let allRecords = [];
-
-      for (const entry of entries) {
-        prog.textContent = `Memproses: ${entry.name}...`;
-        const buf  = await entry.async('arraybuffer');
-        const wb   = XLSX.read(buf, { type: 'array', cellDates: true });
-        const ws   = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(ws, { raw: false, defval: '' });
-        if (!rows.length) continue;
-
-        const headers     = Object.keys(rows[0] || {});
-        const isCancelled = headers.some(h => /alasan|pembatalan|cancel/i.test(h));
-        const category    = isCancelled ? 'Batal' : 'Gagal Kirim';
-
-        const recs = rows
-          .map(r => ({
-            order_no:        col(r, 'No. Pesanan', 'No Pesanan', 'Order ID'),
-            category,
-            cancel_reason:   isCancelled
-              ? col(r, 'Alasan Pembatalan', 'Cancel Reason', 'Cancellation Reason')
-              : null,
-            delivery_status: !isCancelled
-              ? col(r, 'Status Pengiriman', 'Status pengiriman gagal', 'Delivery Status', 'Status Gagal')
-              : null,
-            sku:          col(r, 'Nomor Referensi SKU', 'No. SKU Produk', 'SKU'),
-            product_name: col(r, 'Nama Produk', 'Product Name'),
-            gross_revenue: toNum(col(r, 'Subtotal Pesanan', 'Subtotal', 'Total Harga')),
-            order_date:    toDate(col(r, 'Waktu Pesanan Dibuat', 'Tanggal Pesanan', 'Order Date')),
-          }))
-          .filter(r => r.order_no);
-
-        allRecords.push(...recs);
+      // ── SLOT 1: Pembatalan ──
+      if (f1) {
+        prog.textContent = 'Membaca Slot 1 — Pembatalan...';
+        const rows = await readXlsx(f1);
+        for (const r of rows) {
+          const orderNo = this._col(r, 'No. Pesanan', 'No Pesanan', 'Order ID');
+          if (!orderNo) continue;
+          records.push({
+            order_no:      orderNo,
+            sku:           this._col(r, 'SKU Induk', 'Nomor Referensi SKU', 'No. SKU Produk', 'SKU') || null,
+            product_name:  this._col(r, 'Nama Produk', 'Product Name') || null,
+            cancel_reason: this._col(r, 'Alasan Pembatalan', 'Alasan', 'Cancel Reason') || null,
+            qty:           this._toNum(this._col(r, 'Jumlah', 'Qty', 'Quantity')) || 1,
+            status:        'Batal',
+            stok_action:   'tidak_berubah',
+          });
+        }
       }
 
-      if (!allRecords.length) {
-        res.innerHTML = `<p class="text-orange-700">Tidak ada data valid ditemukan di file ZIP.</p>`;
+      // ── SLOT 2: Pengiriman Gagal ──
+      if (f2) {
+        prog.textContent = 'Membaca Slot 2 — Pengiriman Gagal...';
+        const rows = await readXlsx(f2);
+        for (const r of rows) {
+          const orderNo = this._col(r, 'No. Pesanan', 'No Pesanan', 'Order ID');
+          if (!orderNo) continue;
+          const delivSt = this._col(r, 'Status pengiriman gagal', 'Status Pengiriman Gagal', 'Status Pengiriman', 'Delivery Status', 'Status');
+          const sudahKembali = /selesai dikirim ke penjual/i.test(delivSt);
+          records.push({
+            order_no:      orderNo,
+            sku:           this._col(r, 'SKU Induk', 'Nomor Referensi SKU', 'No. SKU Produk', 'SKU') || null,
+            product_name:  this._col(r, 'Nama Produk', 'Product Name') || null,
+            cancel_reason: delivSt || null,
+            qty:           this._toNum(this._col(r, 'Jumlah', 'Qty', 'Quantity')) || 1,
+            status:        'Gagal Kirim',
+            stok_action:   sudahKembali ? 'barang_kembali' : 'menunggu_barang_kembali',
+          });
+        }
+      }
+
+      // ── SLOT 3: Pengembalian Barang/Dana ──
+      if (f3) {
+        prog.textContent = 'Membaca Slot 3 — Pengembalian Barang/Dana...';
+        const rows = await readXlsx(f3);
+        for (const r of rows) {
+          const orderNo = this._col(r, 'No. Pesanan', 'No Pesanan', 'Order ID');
+          if (!orderNo) continue;
+          const retSt = this._col(r, 'Status Pengembalian Barang', 'Status Pengembalian', 'Return Status');
+          const sudahKembali = /pengiriman pengembalian barang selesai/i.test(retSt);
+          records.push({
+            order_no:      orderNo,
+            sku:           this._col(r, 'SKU Induk/Kode Variasi', 'SKU Induk', 'Kode Variasi', 'Nomor Referensi SKU', 'No. SKU Produk', 'SKU') || null,
+            product_name:  this._col(r, 'Nama Produk', 'Product Name') || null,
+            cancel_reason: this._col(r, 'Status Pembatalan/Pengembalian', 'Status Pengembalian', 'Status') || null,
+            qty:           this._toNum(this._col(r, 'Jumlah Produk Dikembalikan', 'Jumlah Dikembalikan', 'Jumlah', 'Qty')) || 1,
+            status:        'Retur',
+            stok_action:   sudahKembali ? 'barang_kembali' : 'menunggu_barang_kembali',
+          });
+        }
+      }
+
+      if (!records.length) {
+        res.innerHTML = `<p class="text-orange-700">Tidak ada data valid ditemukan di file yang dipilih.</p>`;
         res.className = 'mt-3 p-3 rounded-lg bg-orange-50 border border-orange-100 text-sm';
         res.classList.remove('hidden');
         prog.classList.add('hidden');
         return;
       }
 
-      prog.textContent = `Menyimpan ${allRecords.length} data...`;
-      const { error } = await App.db()
-        .from('returns')
-        .upsert(allRecords, { onConflict: 'order_no,category', ignoreDuplicates: true });
-      if (error) throw error;
+      // ── Cek order yang sudah ada di DB ──
+      prog.textContent = 'Mengecek database...';
+      const allNos = [...new Set(records.map(r => r.order_no))];
+      const existingMap = new Map(); // order_no → [{id, sku}]
+      const BATCH = 100;
+      for (let i = 0; i < allNos.length; i += BATCH) {
+        const chunk = allNos.slice(i, i + BATCH);
+        const { data, error } = await App.db().from('orders').select('id, order_no, sku').in('order_no', chunk);
+        if (error) throw error;
+        (data || []).forEach(o => {
+          if (!existingMap.has(o.order_no)) existingMap.set(o.order_no, []);
+          existingMap.get(o.order_no).push(o);
+        });
+      }
 
-      const nBatal = allRecords.filter(r => r.category === 'Batal').length;
-      const nGagal = allRecords.filter(r => r.category === 'Gagal Kirim').length;
+      // ── Update pesanan ada / Insert pesanan baru ──
+      let nUpdate = 0, nInsert = 0, nBatal = 0, nGagal = 0, nRetur = 0, nReview = 0;
+      const today = App.todayISO();
+
+      for (const rec of records) {
+        const existing = existingMap.get(rec.order_no) || [];
+        const updateFields = {
+          status:       rec.status,
+          stok_action:  rec.stok_action,
+          cancel_reason: rec.cancel_reason || null,
+        };
+
+        if (existing.length > 0) {
+          let targetIds;
+          if (rec.sku) {
+            const skuMatch = existing.filter(o => (o.sku || '') === rec.sku);
+            targetIds = (skuMatch.length ? skuMatch : existing).map(o => o.id);
+          } else {
+            targetIds = existing.map(o => o.id);
+          }
+          const { error } = await App.db().from('orders').update(updateFields).in('id', targetIds);
+          if (error) throw new Error(`Gagal update ${rec.order_no}: ${error.message}`);
+          nUpdate++;
+        } else {
+          const { error } = await App.db().from('orders').insert({
+            order_no:      rec.order_no,
+            order_date:    today,
+            product_name:  rec.product_name || '-',
+            sku:           rec.sku || null,
+            qty:           rec.qty || 1,
+            selling_price: 0,
+            gross_revenue: 0,
+            source:        'shopee',
+            ...updateFields,
+          });
+          if (error) throw new Error(`Gagal insert ${rec.order_no}: ${error.message}`);
+          nInsert++;
+        }
+
+        if (rec.status === 'Batal')           nBatal++;
+        else if (rec.status === 'Gagal Kirim') nGagal++;
+        else if (rec.status === 'Retur')       nRetur++;
+        if (rec.stok_action === 'menunggu_barang_kembali') nReview++;
+      }
 
       res.innerHTML = `
-        <div class="space-y-1">
-          <p class="font-semibold text-green-700">Import berhasil!</p>
-          <p>Pesanan Dibatalkan: <strong>${nBatal}</strong></p>
-          <p>Gagal Kirim: <strong>${nGagal}</strong></p>
-          <p>Total: <strong>${allRecords.length}</strong> data</p>
-          <p class="text-xs text-gray-400 mt-1">Duplikat dilewati otomatis.</p>
+        <div class="space-y-2">
+          <p class="font-semibold text-green-700">Proses selesai!</p>
+          <div class="grid grid-cols-3 gap-2 text-xs text-center">
+            ${nBatal ? `<div class="bg-gray-50 border border-gray-200 rounded-lg p-2"><p class="font-bold text-xl text-gray-700">${nBatal}</p><p class="text-gray-500 mt-0.5">Batal</p></div>` : ''}
+            ${nGagal ? `<div class="bg-red-50 border border-red-100 rounded-lg p-2"><p class="font-bold text-xl text-red-600">${nGagal}</p><p class="text-red-500 mt-0.5">Gagal Kirim</p></div>` : ''}
+            ${nRetur ? `<div class="bg-orange-50 border border-orange-100 rounded-lg p-2"><p class="font-bold text-xl text-orange-600">${nRetur}</p><p class="text-orange-500 mt-0.5">Retur</p></div>` : ''}
+          </div>
+          <div class="text-xs text-gray-500 pt-2 border-t border-gray-100 space-y-0.5">
+            <p>Diperbarui: <strong>${nUpdate}</strong> pesanan &nbsp;·&nbsp; Ditambah baru: <strong>${nInsert}</strong> pesanan</p>
+            ${nReview ? `<p class="text-amber-600 font-medium">${nReview} pesanan masuk tab "Perlu Direview" (barang belum kembali ke gudang).</p>` : ''}
+          </div>
         </div>`;
       res.className = 'mt-3 p-3 rounded-lg bg-green-50 border border-green-100 text-sm';
       res.classList.remove('hidden');
       prog.classList.add('hidden');
-      App.toast(`Import retur/batal: ${allRecords.length} data`, 'success');
+      App.toast(`Import selesai: ${nBatal} Batal · ${nGagal} Gagal Kirim · ${nRetur} Retur`, 'success');
+
+      await this._loadOrders();
+      this._renderTab();
+      this._updateReviewBadge();
 
     } catch (err) {
       prog.classList.add('hidden');
-      res.innerHTML = `<p class="text-red-600">Error: ${err.message}</p>`;
+      res.innerHTML = `<p class="font-semibold text-red-600">Error</p><p class="text-red-700 text-xs mt-1 whitespace-pre-wrap">${err.message}</p>`;
       res.className = 'mt-3 p-3 rounded-lg bg-red-50 border border-red-100 text-sm';
       res.classList.remove('hidden');
     }
