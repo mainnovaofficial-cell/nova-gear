@@ -19,7 +19,7 @@ const Operasional = {
         </button>
       </div>
     </div>
-    <div id="ops-summary" class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5"></div>
+    <div id="ops-summary" class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5"></div>
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <div class="card lg:col-span-2">
         <div class="card-header mb-3">
@@ -49,12 +49,15 @@ const Operasional = {
 
   _renderSummary() {
     const d = this._data;
-    const total   = d.reduce((s,r) => s+(+r.cost||0), 0);
-    const thisMonth = d.filter(r => (r.op_date||'').slice(0,7) === App.todayISO().slice(0,7));
-    const monthTotal = thisMonth.reduce((s,r) => s+(+r.cost||0), 0);
+    const total      = d.reduce((s, r) => s + (+r.cost || 0), 0);
+    const thisMonth  = d.filter(r => (r.op_date || '').slice(0, 7) === App.todayISO().slice(0, 7));
+    const monthTotal = thisMonth.reduce((s, r) => s + (+r.cost || 0), 0);
+    const unpaid     = d.filter(r => (r.payment_status || 'Belum Dibayar') !== 'Sudah Dibayar');
+    const unpaidTotal = unpaid.reduce((s, r) => s + (+r.cost || 0), 0);
     document.getElementById('ops-summary').innerHTML = `
       <div class="stat-card"><p class="stat-label">Total Operasional</p><p class="stat-value text-money">${App.formatRupiah(total)}</p><p class="stat-sub">semua waktu</p></div>
-      <div class="stat-card"><p class="stat-label">Bulan Ini</p><p class="stat-value text-money">${App.formatRupiah(monthTotal)}</p><p class="stat-sub">${App.todayISO().slice(0,7)}</p></div>`;
+      <div class="stat-card"><p class="stat-label">Bulan Ini</p><p class="stat-value text-money">${App.formatRupiah(monthTotal)}</p><p class="stat-sub">${App.todayISO().slice(0, 7)}</p></div>
+      <div class="stat-card border-l-4 border-red-400"><p class="stat-label text-red-600">Total Belum Dibayar</p><p class="stat-value text-red-500">${App.formatRupiah(unpaidTotal)}</p><p class="stat-sub">${unpaid.length} pengeluaran</p></div>`;
   },
 
   _renderTable() {
@@ -63,20 +66,35 @@ const Operasional = {
       el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg><p>Belum ada biaya operasional</p></div>`;
       return;
     }
+    const isOwner = !App.isAdmin();
     el.innerHTML = `
     <div class="table-wrapper">
       <table class="data-table">
-        <thead><tr><th>Tanggal</th><th>Kategori</th><th>Deskripsi</th><th class="text-right">Biaya</th><th>Rutin</th><th></th></tr></thead>
-        <tbody>${this._data.map(r => `<tr>
+        <thead><tr><th>Tanggal</th><th>Kategori</th><th>Deskripsi</th><th class="text-right">Biaya</th><th>Rutin</th><th>Status</th><th></th></tr></thead>
+        <tbody>${this._data.map(r => {
+          const status = r.payment_status || 'Belum Dibayar';
+          const isPaid = status === 'Sudah Dibayar';
+          const badgeClass = isPaid
+            ? 'badge-green cursor-default'
+            : (isOwner ? 'badge-red cursor-pointer hover:opacity-75' : 'badge-red cursor-default');
+          const clickAttr = isOwner
+            ? `onclick="Operasional._toggleStatus('${r.id}', '${status}')"`
+            : '';
+          const titleAttr = isOwner && !isPaid
+            ? `title="Klik untuk tandai Sudah Dibayar"`
+            : (isOwner && isPaid ? `title="Klik untuk tandai Belum Dibayar"` : `title="Hanya Owner yang dapat mengubah status"`);
+          return `<tr>
           <td class="whitespace-nowrap">${App.formatDate(r.op_date)}</td>
-          <td><span class="badge badge-gray">${r.category||'-'}</span></td>
-          <td class="max-w-[200px] truncate">${r.description||'-'}</td>
+          <td><span class="badge badge-gray">${r.category || '-'}</span></td>
+          <td class="max-w-[200px] truncate">${r.description || '-'}</td>
           <td class="text-right font-semibold text-money">${App.formatRupiah(r.cost)}</td>
           <td>${r.recurring ? `<span class="badge badge-blue">Rutin</span>` : ''}</td>
+          <td><span class="badge ${badgeClass}" ${clickAttr} ${titleAttr}>${status}</span></td>
           <td><button onclick="Operasional.delete('${r.id}')" class="text-gray-300 hover:text-red-500 transition-colors">
             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
           </button></td>
-        </tr>`).join('')}</tbody>
+        </tr>`;
+        }).join('')}</tbody>
       </table>
     </div>`;
   },
@@ -88,11 +106,11 @@ const Operasional = {
       const c = r.category || 'Lainnya';
       map[c] = (map[c] || 0) + (+r.cost || 0);
     });
-    const total   = Object.values(map).reduce((s,v) => s+v, 0);
-    const entries = Object.entries(map).sort((a,b) => b[1]-a[1]);
+    const total   = Object.values(map).reduce((s, v) => s + v, 0);
+    const entries = Object.entries(map).sort((a, b) => b[1] - a[1]);
     if (!entries.length) { el.innerHTML = `<p class="text-gray-400 text-sm text-center py-4">Tidak ada data</p>`; return; }
     el.innerHTML = `<div class="space-y-3">${entries.map(([cat, val]) => {
-      const pct = total > 0 ? Math.round(val/total*100) : 0;
+      const pct = total > 0 ? Math.round(val / total * 100) : 0;
       return `<div>
         <div class="flex justify-between text-sm mb-1">
           <span class="text-gray-600 font-medium">${cat}</span>
@@ -114,7 +132,7 @@ const Operasional = {
         <div><label class="label">Tanggal *</label><input id="op-date" type="date" class="input" value="${App.todayISO()}"/></div>
         <div><label class="label">Kategori *</label>
           <select id="op-cat" class="input">
-            ${this._categories.map(c=>`<option>${c}</option>`).join('')}
+            ${this._categories.map(c => `<option>${c}</option>`).join('')}
           </select>
         </div>
         <div><label class="label">Deskripsi *</label><input id="op-desc" class="input" placeholder="Detail pengeluaran"/></div>
@@ -135,19 +153,31 @@ const Operasional = {
     const cost = +document.getElementById('op-cost').value || 0;
     if (!desc || !cost) { App.toast('Deskripsi dan biaya wajib diisi.', 'warning'); return; }
     const payload = {
-      op_date:     document.getElementById('op-date').value,
-      category:    document.getElementById('op-cat').value,
-      description: desc,
+      op_date:        document.getElementById('op-date').value,
+      category:       document.getElementById('op-cat').value,
+      description:    desc,
       cost,
-      recurring:   document.getElementById('op-recurring').checked,
-      notes:       document.getElementById('op-notes').value.trim() || null,
-      created_by:  App.isAdmin() ? 'admin' : 'owner',
+      recurring:      document.getElementById('op-recurring').checked,
+      notes:          document.getElementById('op-notes').value.trim() || null,
+      created_by:     App.isAdmin() ? 'admin' : 'owner',
+      payment_status: 'Belum Dibayar',
     };
     const { error } = await App.db().from('operational').insert(payload);
     if (error) { App.toast('Error: ' + error.message, 'error'); return; }
     App.closeModal();
     App.toast('Biaya operasional disimpan!', 'success');
     await this._load();
+  },
+
+  async _toggleStatus(id, currentStatus) {
+    if (App.isAdmin()) return;
+    const newStatus = currentStatus === 'Sudah Dibayar' ? 'Belum Dibayar' : 'Sudah Dibayar';
+    const { error } = await App.db().from('operational').update({ payment_status: newStatus }).eq('id', id);
+    if (error) { App.toast('Gagal ubah status: ' + error.message, 'error'); return; }
+    const row = this._data.find(r => r.id === id);
+    if (row) row.payment_status = newStatus;
+    this._renderSummary();
+    this._renderTable();
   },
 
   async delete(id) {
@@ -166,6 +196,7 @@ const Operasional = {
     App.exportCSV(this._data.map(r => ({
       tanggal: r.op_date, kategori: r.category, deskripsi: r.description,
       biaya: r.cost, rutin: r.recurring ? 'Ya' : 'Tidak',
+      status_pembayaran: r.payment_status || 'Belum Dibayar',
     })), 'operasional-export.csv');
   },
 };
