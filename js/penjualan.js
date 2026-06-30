@@ -983,9 +983,9 @@ const Penjualan = {
       body: `
         <p class="text-sm text-gray-600 mb-4">Upload 1, 2, atau 3 file sekaligus. Semua slot opsional — upload file yang tersedia lalu klik <strong>Proses Semua</strong>.</p>
         <div class="space-y-3">
-          ${slot(1, 'Pembatalan', 'Pembatalan', 'No. Pesanan, Alasan Pembatalan, SKU Induk, Nama Produk')}
-          ${slot(2, 'Pengiriman Gagal', 'Pengiriman Gagal', 'No. Pesanan, Status pengiriman gagal, SKU')}
-          ${slot(3, 'Pengembalian Barang/Dana', 'Pengembalian Barang/Dana', 'No. Pesanan, SKU Induk/Kode Variasi, Status Pembatalan/Pengembalian, Status Pengembalian Barang, Jumlah Produk Dikembalikan')}
+          ${slot(1, 'Pembatalan (Order Cancellation)', 'Pembatalan', 'No. Pesanan, Alasan Pembatalan, SKU Induk, Nama Produk')}
+          ${slot(2, 'Pengiriman Gagal (Order Failed Delivery)', 'Pengiriman Gagal', 'No. Pesanan, Status pengiriman gagal, SKU')}
+          ${slot(3, 'Pengembalian Barang/Dana (Order Return Refund)', 'Pengembalian Barang/Dana', 'No. Pesanan, SKU Induk/Kode Variasi, Status Pembatalan/Pengembalian, Status Pengembalian Barang, Jumlah Produk Dikembalikan')}
         </div>
         <div id="ret-progress" class="hidden mt-4 text-sm text-blue-600 text-center font-medium"></div>
         <div id="ret-result"   class="hidden mt-3 p-3 rounded-lg text-sm"></div>`,
