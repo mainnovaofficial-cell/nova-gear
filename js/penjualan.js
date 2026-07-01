@@ -1113,24 +1113,27 @@ const Penjualan = {
       for (const rec of records) {
         const existing = existingMap.get(rec.order_no) || [];
         const updateFields = {
-          status:       rec.status,
-          stok_action:  rec.stok_action,
+          status:        rec.status,
+          stok_action:   rec.stok_action,
           cancel_reason: rec.cancel_reason || null,
         };
 
+        // Cari exact match order_no + sku (kalau rec.sku null, cocok semua record order_no itu)
+        let targetIds = [];
         if (existing.length > 0) {
-          let targetIds;
           if (rec.sku) {
-            const skuMatch = existing.filter(o => (o.sku || '') === rec.sku);
-            targetIds = (skuMatch.length ? skuMatch : existing).map(o => o.id);
+            targetIds = existing.filter(o => (o.sku || '') === rec.sku).map(o => o.id);
           } else {
             targetIds = existing.map(o => o.id);
           }
+        }
+
+        if (targetIds.length > 0) {
           const { error } = await App.db().from('orders').update(updateFields).in('id', targetIds);
           if (error) throw new Error(`Gagal update ${rec.order_no}: ${error.message}`);
           nUpdate++;
         } else {
-          const { error } = await App.db().from('orders').upsert({
+          const { error } = await App.db().from('orders').insert({
             order_no:      rec.order_no,
             order_date:    today,
             product_name:  rec.product_name || '-',
@@ -1140,7 +1143,7 @@ const Penjualan = {
             gross_revenue: 0,
             source:        'shopee',
             ...updateFields,
-          }, { onConflict: 'order_no,sku' });
+          });
           if (error) throw new Error(`Gagal insert ${rec.order_no}: ${error.message}`);
           nInsert++;
         }
