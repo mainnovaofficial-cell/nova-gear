@@ -1103,18 +1103,17 @@ const Penjualan = {
         return;
       }
 
-      // ── Cek order yang sudah ada di DB ──
+      // ── Cek order yang sudah ada di DB (lookup by order_no+sku) ──
       prog.textContent = 'Mengecek database...';
       const allNos = [...new Set(records.map(r => r.order_no))];
-      const existingMap = new Map(); // order_no → [{id, sku}]
+      const existingMap = new Map(); // "order_no||sku" → id
       const BATCH = 100;
       for (let i = 0; i < allNos.length; i += BATCH) {
         const chunk = allNos.slice(i, i + BATCH);
         const { data, error } = await App.db().from('orders').select('id, order_no, sku').in('order_no', chunk);
         if (error) throw error;
         (data || []).forEach(o => {
-          if (!existingMap.has(o.order_no)) existingMap.set(o.order_no, []);
-          existingMap.get(o.order_no).push(o);
+          existingMap.set(`${o.order_no}||${o.sku || ''}`, o.id);
         });
       }
 
@@ -1123,25 +1122,16 @@ const Penjualan = {
       const today = App.todayISO();
 
       for (const rec of records) {
-        const existing = existingMap.get(rec.order_no) || [];
+        const key        = `${rec.order_no}||${rec.sku || ''}`;
+        const existingId = existingMap.get(key);
         const updateFields = {
           status:        rec.status,
           stok_action:   rec.stok_action,
           cancel_reason: rec.cancel_reason || null,
         };
 
-        // Cari exact match order_no + sku (kalau rec.sku null, cocok semua record order_no itu)
-        let targetIds = [];
-        if (existing.length > 0) {
-          if (rec.sku) {
-            targetIds = existing.filter(o => (o.sku || '') === rec.sku).map(o => o.id);
-          } else {
-            targetIds = existing.map(o => o.id);
-          }
-        }
-
-        if (targetIds.length > 0) {
-          const { error } = await App.db().from('orders').update(updateFields).in('id', targetIds);
+        if (existingId) {
+          const { error } = await App.db().from('orders').update(updateFields).eq('id', existingId);
           if (error) throw new Error(`Gagal update ${rec.order_no}: ${error.message}`);
           nUpdate++;
         } else {
@@ -1157,6 +1147,7 @@ const Penjualan = {
             ...updateFields,
           });
           if (error) throw new Error(`Gagal insert ${rec.order_no}: ${error.message}`);
+          existingMap.set(key, true); // tandai agar insert ke-2 (baris duplikat di file) jadi update
           nInsert++;
         }
 
