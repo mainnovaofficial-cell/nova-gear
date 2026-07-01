@@ -333,6 +333,15 @@ const HPP = {
       return;
     }
 
+    // Auto-registrasi SKU baru ke stok_awal dengan hidden=false supaya langsung terlihat di Rekap Stok.
+    // ignoreDuplicates:true → skip kalau SKU sudah ada, tidak overwrite baris yang ada.
+    const newSkuRows = items
+      .filter(it => it.sku)
+      .map(it => ({ sku: it.sku, product_name: it.product_name || it.sku, qty: 0, hidden: false, updated_at: new Date().toISOString() }));
+    if (newSkuRows.length) {
+      await App.db().from('stok_awal').upsert(newSkuRows, { onConflict: 'sku', ignoreDuplicates: true });
+    }
+
     App.closeModal();
     App.toast('Pembelian disimpan!', 'success');
     await this._load();

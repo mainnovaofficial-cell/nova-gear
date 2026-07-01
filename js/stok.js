@@ -181,7 +181,7 @@ const Stok = {
             const sisa = r.awal + r.masuk - r.keluar + r.adjust;
             const [sc, sl] = sisa <= 0 ? ['badge-red','Habis'] : sisa <= 5 ? ['badge-yellow','Hampir Habis'] : ['badge-green','Tersedia'];
             const members = [...r.members].sort();
-            return `<tr class="${r.hidden ? 'opacity-50' : ''}">
+            return `<tr class="${r.hidden ? 'bg-gray-50' : ''}">
               <td class="font-mono text-xs font-semibold text-gray-600">
                 ${r.sku}
                 ${r.hidden ? `<span class="badge badge-gray text-[10px] ml-1">Tersembunyi</span>` : ''}
@@ -205,7 +205,7 @@ const Stok = {
                           title="${members.length > 1 ? 'Aksi ' + m : 'Aksi'}">
                     ⋮${members.length > 1 ? `<span class="text-[10px] text-gray-400 font-normal ml-1">${m}</span>` : ''}
                   </button>
-                  <div id="${menuId}" class="stok-action-menu hidden absolute right-0 mt-1 w-44 bg-white border border-gray-100 rounded-lg shadow-lg z-20 py-1 text-xs">
+                  <div id="${menuId}" class="stok-action-menu hidden absolute right-0 mt-1 w-44 bg-white border border-gray-100 rounded-lg shadow-lg z-50 py-1 text-xs">
                     <button onclick="Stok.editStokAwal('${esc}')" class="block w-full text-left px-3 py-1.5 hover:bg-gray-50 text-blue-600">Edit Stok Awal</button>
                     ${App.isOwner() ? `
                     <button onclick="Stok.toggleHidden('${esc}', ${!isHidden(m)})" class="block w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-600">${isHidden(m) ? 'Tampilkan' : 'Sembunyikan'}</button>
