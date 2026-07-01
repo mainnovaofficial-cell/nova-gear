@@ -848,13 +848,20 @@ const Penjualan = {
           prog.textContent = `Menyimpan pesanan baru... (${Math.min(i + INSERT_BATCH, toInsert.length)}/${toInsert.length})`;
           let { error } = await App.db().from('orders').upsert(batch, { onConflict: 'order_no,sku' });
 
-          // Fallback: kolom stok_action / cancel_reason belum ada (migrasi v3 belum dijalankan)
+          // Fallback 1: kolom stok_action / cancel_reason belum ada (migrasi v3 belum dijalankan)
+          let batchToUse = batch;
           if (error && (error.message === 'Bad Request' ||
               (error.message || '').includes('stok_action') ||
               (error.message || '').includes('cancel_reason'))) {
             const stripped = batch.map(({ cancel_reason, stok_action, ...rec }) => rec);
             ({ error } = await App.db().from('orders').upsert(stripped, { onConflict: 'order_no,sku' }));
+            batchToUse = stripped;
             migrationWarning = true;
+          }
+          // Fallback 2: unique constraint (order_no,sku) belum aktif di PostgREST →
+          // plain INSERT aman karena toInsert sudah difilter ke record yang benar-benar baru
+          if (error && error.code === '42P10') {
+            ({ error } = await App.db().from('orders').insert(batchToUse));
           }
           if (error) { insertError = error; break; }
         }
