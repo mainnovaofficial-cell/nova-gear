@@ -767,10 +767,18 @@ const Penjualan = {
       // Parse semua baris, petakan ke 4 status internal, lewati status tidak relevan
       const records = rows
         .map(r => {
-          const shopeeStatus = col(r, 'Status Pesanan', 'Status', 'Order Status');
-          const cancelReason = col(r, 'Alasan Pembatalan', 'Alasan Pembatalan Pesanan', 'Cancel Reason', 'Cancellation Reason');
-          const status       = this._mapStatus(shopeeStatus, cancelReason);
+          const shopeeStatus       = col(r, 'Status Pesanan', 'Status', 'Order Status');
+          const cancelReason       = col(r, 'Alasan Pembatalan', 'Alasan Pembatalan Pesanan', 'Cancel Reason', 'Cancellation Reason');
+          const cancelReturnStatus = col(r, 'Status Pembatalan/Pengembalian', 'Cancellation/Return Status', 'Return Status');
+          const returnedQty        = toNum(col(r, 'Returned quantity', 'Jumlah Dikembalikan', 'Returned Qty'));
+
+          let status = this._mapStatus(shopeeStatus, cancelReason);
           if (!status) return null; // Menunggu Pembayaran, dll → lewati
+
+          // Pesanan "Selesai" yang punya retur aktif → override ke Retur, masuk Perlu Direview
+          const isRetur = status === 'Selesai' && cancelReturnStatus && returnedQty > 0;
+          if (isRetur) status = 'Retur';
+
           return {
             order_no:         col(r, 'No. Pesanan', 'No Pesanan', 'Order ID'),
             sku:              col(r, 'Nomor Referensi SKU', 'No. SKU Produk', 'SKU'),
@@ -784,9 +792,9 @@ const Penjualan = {
             order_date:       toDate(col(r, 'Waktu Pesanan Dibuat', 'Tanggal Pesanan', 'Order Date')),
             expedition:       col(r, 'Opsi Pengiriman', 'Ekspedisi', 'Kurir', 'Shipping'),
             status,
-            cancel_reason:    cancelReason || null,
+            cancel_reason:    isRetur ? cancelReturnStatus : (cancelReason || null),
             source:           'shopee',
-            stok_action:      this._determineStokAction(status, cancelReason),
+            stok_action:      isRetur ? 'menunggu_barang_kembali' : this._determineStokAction(status, cancelReason),
           };
         })
         .filter(r => r && r.order_no);
