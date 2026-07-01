@@ -338,9 +338,8 @@ const Penjualan = {
     prevD.setDate(prevD.getDate() - 1);
     const prev = prevD.toISOString().slice(0, 10);
 
-    // Filter by created_at (import date), not order_date (Shopee order date)
-    const dayAll  = this._orders.filter(o => (o.created_at || '').slice(0, 10) === sel);
-    const prevAll = this._orders.filter(o => (o.created_at || '').slice(0, 10) === prev);
+    const dayAll  = this._orders.filter(o => (o.order_date || '').slice(0, 10) === sel);
+    const prevAll = this._orders.filter(o => (o.order_date || '').slice(0, 10) === prev);
 
     // Total Pesanan = unique order_no
     const uniqueNos = new Set(dayAll.map(o  => o.order_no || o.id));
@@ -363,7 +362,7 @@ const Penjualan = {
     };
 
     const tableHtml = dayAll.length === 0
-      ? `<div class="empty-state card py-12 mt-4"><p>Tidak ada pesanan yang diimport pada tanggal ini.</p></div>`
+      ? `<div class="empty-state card py-12 mt-4"><p>Tidak ada pesanan dengan tanggal ini.</p></div>`
       : `<div class="table-wrapper mt-4">
           <table class="data-table">
             <thead><tr>
@@ -384,7 +383,7 @@ const Penjualan = {
     return `
     <div class="card mt-4 !py-3">
       <div class="flex flex-wrap gap-3 items-center">
-        <label class="text-sm font-medium text-gray-600">Tanggal Import:</label>
+        <label class="text-sm font-medium text-gray-600">Tanggal Pesanan:</label>
         <input type="date" value="${sel}" max="${today}" class="input w-40 !py-1.5 text-xs"
                onchange="Penjualan._setHarianDate(this.value)"/>
         ${sel !== today ? `<button onclick="Penjualan._setHarianDate('${today}')" class="btn-secondary text-xs !py-1.5">Hari Ini</button>` : ''}

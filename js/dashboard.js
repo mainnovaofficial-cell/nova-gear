@@ -49,7 +49,7 @@ const Dashboard = {
     const gagal     = all.filter(o => o.status === 'Gagal Kirim');
     const retur     = all.filter(o => o.status === 'Dikembalikan');
     const diproses  = all.filter(o => o.status === 'Diproses');
-    const diprosesHariIni = diproses.filter(o => (o.created_at || '').slice(0, 10) === today);
+    const diprosesHariIni = diproses.filter(o => (o.order_date || '').slice(0, 10) === today);
 
     const sum       = (arr, key) => arr.reduce((s, r) => s + (+r[key] || 0), 0);
 
