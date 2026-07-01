@@ -1049,7 +1049,6 @@ const Penjualan = {
           const orderNo = this._col(r, 'No. Pesanan', 'No Pesanan', 'Order ID');
           if (!orderNo) continue;
           const delivSt = this._col(r, 'Status pengiriman gagal', 'Status Pengiriman Gagal', 'Status Pengiriman', 'Delivery Status', 'Status');
-          const sudahKembali = /selesai dikirim ke penjual/i.test(delivSt);
           records.push({
             order_no:      orderNo,
             sku:           this._col(r, 'SKU Induk', 'Nomor Referensi SKU', 'No. SKU Produk', 'SKU') || null,
@@ -1057,7 +1056,7 @@ const Penjualan = {
             cancel_reason: delivSt || null,
             qty:           this._toNum(this._col(r, 'Jumlah', 'Qty', 'Quantity')) || 1,
             status:        'Gagal Kirim',
-            stok_action:   sudahKembali ? 'barang_kembali' : 'menunggu_barang_kembali',
+            stok_action:   'menunggu_barang_kembali',
           });
         }
       }
@@ -1070,7 +1069,6 @@ const Penjualan = {
           const orderNo = this._col(r, 'No. Pesanan', 'No Pesanan', 'Order ID');
           if (!orderNo) continue;
           const retSt = this._col(r, 'Status Pengembalian Barang', 'Status Pengembalian', 'Return Status');
-          const sudahKembali = /pengiriman pengembalian barang selesai/i.test(retSt);
           records.push({
             order_no:      orderNo,
             sku:           this._col(r, 'SKU Induk/Kode Variasi', 'SKU Induk', 'Kode Variasi', 'Nomor Referensi SKU', 'No. SKU Produk', 'SKU') || null,
@@ -1078,7 +1076,7 @@ const Penjualan = {
             cancel_reason: this._col(r, 'Status Pembatalan/Pengembalian', 'Status Pengembalian', 'Status') || null,
             qty:           this._toNum(this._col(r, 'Jumlah Produk Dikembalikan', 'Jumlah Dikembalikan', 'Jumlah', 'Qty')) || 1,
             status:        'Retur',
-            stok_action:   sudahKembali ? 'barang_kembali' : 'menunggu_barang_kembali',
+            stok_action:   'menunggu_barang_kembali',
           });
         }
       }
