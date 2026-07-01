@@ -847,14 +847,14 @@ const Penjualan = {
         for (let i = 0; i < toInsert.length; i += INSERT_BATCH) {
           const batch = toInsert.slice(i, i + INSERT_BATCH);
           prog.textContent = `Menyimpan pesanan baru... (${Math.min(i + INSERT_BATCH, toInsert.length)}/${toInsert.length})`;
-          let { error } = await App.db().from('orders').insert(batch);
+          let { error } = await App.db().from('orders').upsert(batch, { onConflict: 'order_no,sku' });
 
           // Fallback: kolom stok_action / cancel_reason belum ada (migrasi v3 belum dijalankan)
           if (error && (error.message === 'Bad Request' ||
               (error.message || '').includes('stok_action') ||
               (error.message || '').includes('cancel_reason'))) {
             const stripped = batch.map(({ cancel_reason, stok_action, ...rec }) => rec);
-            ({ error } = await App.db().from('orders').insert(stripped));
+            ({ error } = await App.db().from('orders').upsert(stripped, { onConflict: 'order_no,sku' }));
             migrationWarning = true;
           }
           if (error) { insertError = error; break; }
@@ -1130,7 +1130,7 @@ const Penjualan = {
           if (error) throw new Error(`Gagal update ${rec.order_no}: ${error.message}`);
           nUpdate++;
         } else {
-          const { error } = await App.db().from('orders').insert({
+          const { error } = await App.db().from('orders').upsert({
             order_no:      rec.order_no,
             order_date:    today,
             product_name:  rec.product_name || '-',
@@ -1140,7 +1140,7 @@ const Penjualan = {
             gross_revenue: 0,
             source:        'shopee',
             ...updateFields,
-          });
+          }, { onConflict: 'order_no,sku' });
           if (error) throw new Error(`Gagal insert ${rec.order_no}: ${error.message}`);
           nInsert++;
         }
@@ -1623,7 +1623,7 @@ const Penjualan = {
           }
         }
         if (!updated) {
-          const { error } = await App.db().from('orders').insert(payload);
+          const { error } = await App.db().from('orders').upsert(payload, { onConflict: 'order_no,sku' });
           if (error) throw error;
         }
       }
