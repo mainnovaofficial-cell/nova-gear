@@ -164,7 +164,7 @@ const Iklan = {
           biaya:        colBiaya !== -1 ? this._toNum(row[colBiaya]) : 0,
           konversi:     colKonv  !== -1 ? Math.round(this._toNum(row[colKonv])) : 0,
           omzet_iklan:  colOmzet !== -1 ? this._toNum(row[colOmzet]) : 0,
-          acos:         colAcos  !== -1 ? this._toNum(row[colAcos]) : 0,
+          acos:         colAcos  !== -1 ? this._toPercent(row[colAcos]) : 0,
         });
       }
 
@@ -201,6 +201,14 @@ const Iklan = {
     const s = String(v ?? '').replace(/[^\d,.\-]/g, '').trim();
     if (!s) return 0;
     return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
+  },
+
+  // ACOS pakai format desimal titik langsung dari Shopee (mis. "25.90%"),
+  // beda dari kolom Rupiah yang pakai titik sebagai pemisah ribuan — jangan pakai _toNum.
+  _toPercent(v) {
+    const s = String(v ?? '').replace(/[^\d.\-]/g, '').trim();
+    if (!s) return 0;
+    return parseFloat(s) || 0;
   },
 
   async _loadExpenses() {
