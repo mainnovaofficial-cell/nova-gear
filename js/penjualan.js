@@ -158,8 +158,8 @@ const Penjualan = {
   /* ── STATUS & STOK HELPERS ── */
 
   // Petakan status Shopee mentah → 4 status internal Nova Gear (Diproses/Selesai/Gagal Kirim/Batal).
-  // "Dibayar" TIDAK pernah dihasilkan di sini — itu hanya diset oleh Import Income
-  // (lihat importIncomeFile), khusus untuk pesanan yang sudah berstatus "Selesai".
+  // Import Income TIDAK PERNAH mengubah status pesanan (lihat importIncomeFile) — Income hanya
+  // mencatat data keuangan dan menandai income_matched_at, status fulfillment tetap apa adanya.
   // Return null berarti baris harus dilewati (mis. Menunggu Pembayaran, Dikembalikan).
   _mapStatus(shopeeStatus, cancelReason) {
     const s = (shopeeStatus || '').toLowerCase().trim();
@@ -1205,7 +1205,7 @@ const Penjualan = {
           <p class="font-semibold mt-2 mb-1">Sheet Summary (ringkasan bulanan):</p>
           <p>Total Pendapatan · Voucher Penjual · Biaya Komisi AMS · Biaya Administrasi</p>
           <p>Biaya Layanan · Biaya Proses Pesanan · Premi · Total yang Dilepas</p>
-          <p class="mt-2 text-green-700">Pesanan yang ditemukan di sheet Income otomatis diset status <strong>Dibayar</strong>.</p>
+          <p class="mt-2 text-green-700">Pesanan yang ditemukan di sheet Income ditandai <strong>sudah dicocokkan</strong> (kolom internal), status pesanan (Diproses/Selesai/dst) tidak diubah.</p>
         </div>
         <div class="grid grid-cols-2 gap-3 mb-4">
           <div><label class="label">Bulan</label>
@@ -1301,7 +1301,7 @@ const Penjualan = {
       }
 
       let releasesSaved = 0;
-      let ordersMarkedDibayar = 0;
+      let ordersMatched = 0;
       if (releases.length) {
         prog.textContent = `Menyimpan ${releases.length} data Income...`;
         const SAVE_BATCH = 500;
@@ -1312,7 +1312,9 @@ const Penjualan = {
         }
         releasesSaved = releases.length;
 
-        // Update status pesanan: Selesai → Dibayar untuk order_no yang ada di file Income.
+        // Tandai pesanan yang order_no-nya ditemukan di file Income sebagai "sudah dicocokkan"
+        // (income_matched_at). Import Income HANYA mencatat data keuangan — status fulfillment
+        // pesanan (Diproses/Selesai/Gagal Kirim/Batal) TIDAK BOLEH diubah di sini.
         // Pencocokan exact-match SQL (.eq/.in) rentan gagal kalau order_no di tabel orders
         // punya spasi tersisa atau beda kapitalisasi dibanding yang diekstrak dari file Income
         // (mis. "240115ABCD1 " vs "240115abcd1"). Maka pencocokan dinormalisasi di JS dulu
@@ -1320,37 +1322,37 @@ const Penjualan = {
         const normOrderNo = s => String(s || '').replace(/\s+/g, '').toUpperCase();
         const releaseNoSet = new Set(releases.map(r => normOrderNo(r.order_no)));
 
-        prog.textContent = 'Mengambil data pesanan Selesai...';
+        prog.textContent = 'Mengambil data pesanan...';
         const FETCH_PAGE = 1000;
-        let allSelesai = [];
+        let allOrders = [];
         let from = 0;
         while (true) {
           const { data, error: fetchErr } = await App.db()
             .from('orders')
             .select('id, order_no')
-            .eq('status', 'Selesai')
             .not('order_no', 'is', null)
             .range(from, from + FETCH_PAGE - 1);
           if (fetchErr) throw new Error(`Gagal mengambil data pesanan: ${fetchErr.message}`);
-          allSelesai.push(...(data || []));
+          allOrders.push(...(data || []));
           if (!data || data.length < FETCH_PAGE) break;
           from += FETCH_PAGE;
         }
 
-        const matchedIds = allSelesai
+        const matchedIds = allOrders
           .filter(o => releaseNoSet.has(normOrderNo(o.order_no)))
           .map(o => o.id);
 
-        prog.textContent = 'Memperbarui status pesanan...';
+        prog.textContent = 'Menandai pesanan yang cocok dengan Income...';
+        const nowIso = new Date().toISOString();
         const UPDATE_BATCH = 200;
         for (let i = 0; i < matchedIds.length; i += UPDATE_BATCH) {
           const chunk = matchedIds.slice(i, i + UPDATE_BATCH);
           const { error: updErr } = await App.db()
             .from('orders')
-            .update({ status: 'Dibayar' })
+            .update({ income_matched_at: nowIso })
             .in('id', chunk);
-          if (updErr) throw new Error(`Gagal update status Dibayar: ${updErr.message}`);
-          ordersMarkedDibayar += chunk.length;
+          if (updErr) throw new Error(`Gagal menandai income_matched_at: ${updErr.message}`);
+          ordersMatched += chunk.length;
         }
       }
 
@@ -1418,7 +1420,7 @@ const Penjualan = {
           ${releasesSaved ? `
           <div class="mt-2 text-xs text-gray-700 border-t border-gray-100 pt-2 space-y-0.5">
             <p>Data Income per pesanan: <strong>${releasesSaved}</strong> baris</p>
-            <p>Status pesanan diupdate jadi <strong>Dibayar</strong>: <strong>${ordersMarkedDibayar}</strong> pesanan</p>
+            <p>Pesanan dicocokkan dengan Income: <strong>${ordersMatched}</strong> pesanan</p>
           </div>` : `
           <p class="text-xs text-orange-600 mt-1">Sheet "Income" tidak ditemukan — detail per pesanan dilewati, hanya ringkasan Summary yang disimpan.</p>`}
           <div class="mt-2 space-y-0.5 text-xs text-gray-700 border-t border-gray-100 pt-2">

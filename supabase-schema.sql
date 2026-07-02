@@ -32,7 +32,7 @@ create table if not exists orders (
   net_revenue         numeric(14,2) default 0,
   buyer_shipping      numeric(14,2) default 0,
   expedition          text,
-  status              text,   -- Diproses | Selesai | Dibayar | Gagal Kirim | Batal
+  status              text,   -- Diproses | Selesai | Gagal Kirim | Batal ("Dibayar" deprecated, lihat MIGRASI v10)
   order_date          date,
   payment_date        date,
   source              text default 'shopee',  -- shopee | offline
@@ -404,10 +404,10 @@ create table if not exists income_releases (
 create index if not exists income_releases_release_date_idx on income_releases(release_date);
 create index if not exists income_releases_order_no_idx     on income_releases(order_no);
 
--- Catatan: status pesanan baru "Dibayar" akan otomatis diset oleh
--- import Income untuk order_no yang ditemukan di sheet Income dan
--- statusnya saat ini "Selesai". Tidak perlu migrasi data tambahan
--- untuk kolom status (kolom text sudah ada sejak awal).
+-- Catatan (revisi — lihat MIGRASI v10 di bawah): sebelumnya Import Income
+-- otomatis mengubah status pesanan jadi "Dibayar". Perilaku ini SALAH dan
+-- sudah dihapus — Import Income kini hanya menandai income_matched_at,
+-- status fulfillment pesanan tidak pernah diubah oleh Import Income.
 
 -- ═══════════════════════════════════════════════════════
 --  MIGRASI v9 — Import Iklan Shopee (Iklanku, per produk per bulan)
@@ -440,6 +440,47 @@ alter table operational add column if not exists created_by text;
 
 -- Data lama (sebelum kolom ini ada) dianggap diinput Owner.
 update operational set created_by = 'owner' where created_by is null;
+
+-- ═══════════════════════════════════════════════════════
+--  MIGRASI v10 — Fix: Import Income tidak boleh ubah status pesanan
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- Bug lama: importIncomeFile() di js/penjualan.js mengubah status pesanan
+-- "Selesai" → "Dibayar" untuk order_no yang cocok dengan sheet Income.
+-- Ini salah — Import Income seharusnya HANYA mencatat data keuangan, tidak
+-- boleh menimpa status fulfillment. Kode sudah diperbaiki: Import Income
+-- sekarang menandai kolom income_matched_at, TIDAK menyentuh status.
+
+-- 1. Kolom baru untuk menandai pesanan yang sudah cocok dengan Income
+--    (menggantikan overwrite status "Dibayar" yang lama).
+alter table orders add column if not exists income_matched_at timestamptz;
+
+-- 2. Perbaiki data yang sudah kadung ter-overwrite jadi status "Dibayar".
+--    AMAN karena status "Dibayar" HANYA PERNAH diset oleh importIncomeFile(),
+--    dan importIncomeFile() HANYA meng-update baris yang saat itu berstatus
+--    "Selesai" (lihat query lama: .eq('status','Selesai') sebelum update).
+--    Jadi setiap baris yang sekarang "Dibayar" pasti aslinya "Selesai".
+--    Cek dulu jumlahnya (harusnya ~138):
+--      select count(*) from orders where status = 'Dibayar';
+update orders
+set status = 'Selesai'
+where status = 'Dibayar';
+
+-- 3. (Opsional) Tandai income_matched_at untuk pesanan yang order_no-nya
+--    memang sudah ada di income_releases, supaya kolom baru langsung
+--    terisi untuk data historis yang match (bukan cuma dari Import Income
+--    berikutnya).
+update orders o
+set income_matched_at = now()
+from income_releases r
+where o.order_no = r.order_no
+  and o.income_matched_at is null;
+
+-- Alternatif termudah kalau ragu dengan hasil update di atas: re-import
+-- ulang file Order_all bulan bersangkutan via Import Mingguan (Penjualan) —
+-- ini akan menulis ulang status pesanan langsung dari data Shopee terbaru,
+-- tanpa bergantung pada asumsi "Dibayar selalu berasal dari Selesai".
 
 -- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup

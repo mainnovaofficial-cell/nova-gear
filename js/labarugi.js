@@ -51,7 +51,10 @@ const LabaRugi = {
       const releases = releasesData || [];
       const orderNos = [...new Set(releases.map(r => r.order_no).filter(Boolean))];
 
-      // ── 2. Order lines (qty, sku) untuk pesanan Dibayar yang match income bulan ini ──
+      // ── 2. Order lines (qty, sku) untuk pesanan Selesai/Diproses yang match income bulan ini ──
+      // Status final pesanan adalah "Selesai" (Import Income tidak lagi mengubah status jadi
+      // "Dibayar" — lihat importIncomeFile di js/penjualan.js). "Diproses" ikut dihitung karena
+      // dana bisa saja sudah dirilis Shopee sebelum status pesanan sempat diupdate ke "Selesai".
       let orderLines = [];
       if (orderNos.length) {
         const BATCH = 100;
@@ -60,7 +63,7 @@ const LabaRugi = {
           const { data, error } = await db
             .from('orders')
             .select('order_no,sku,qty,status')
-            .eq('status', 'Dibayar')
+            .in('status', ['Selesai', 'Diproses'])
             .in('order_no', chunk);
           if (error) throw error;
           orderLines.push(...(data || []));
@@ -202,7 +205,7 @@ const LabaRugi = {
 
         <!-- Order summary -->
         <div class="card mt-4">
-          <p class="card-title mb-3">Ringkasan Pesanan Dibayar</p>
+          <p class="card-title mb-3">Ringkasan Pesanan Selesai/Diproses</p>
           <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 text-center">
             ${[['Pesanan di Income', uniqueOrders, ''], ['Item Terjual (Qty)', qtyTerjual, 'text-blue-600'], ['Tanpa Data Qty', Math.max(unmatchedCount, 0), unmatchedCount > 0 ? 'text-orange-600' : 'text-gray-400']].map(([l, v, c]) => `
             <div class="bg-gray-50 rounded-lg p-3">
@@ -210,7 +213,7 @@ const LabaRugi = {
               <p class="text-xl font-bold ${c}">${App.formatNumber(v)}</p>
             </div>`).join('')}
           </div>
-          ${unmatchedCount > 0 ? `<p class="text-xs text-orange-600 mt-3">${unmatchedCount} pesanan ada di file Income tapi tidak ditemukan sebagai pesanan status "Dibayar" di tabel Pesanan (HPP/Freebie-nya tidak terhitung).</p>` : ''}
+          ${unmatchedCount > 0 ? `<p class="text-xs text-orange-600 mt-3">${unmatchedCount} pesanan ada di file Income tapi tidak ditemukan sebagai pesanan status "Selesai"/"Diproses" di tabel Pesanan (HPP/Freebie-nya tidak terhitung).</p>` : ''}
         </div>
       </div>`;
     } catch (err) {
