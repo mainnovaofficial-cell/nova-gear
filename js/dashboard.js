@@ -5,96 +5,140 @@
 
 const Dashboard = {
   _charts: {},
+  _bulanNames: ['','Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'],
 
   async onLoad() {
-    const el = document.getElementById('page-dashboard');
-    el.innerHTML = this._skeleton();
-    try {
-      await this._render(el);
-    } catch (err) {
-      console.error(err);
-      App.toast('Gagal memuat dashboard: ' + err.message, 'error');
-    }
+    const now = new Date();
+    const el  = document.getElementById('page-dashboard');
+    el.innerHTML = `
+      <div class="page-header">
+        <div>
+          <h2>Dashboard</h2>
+          <p>Ringkasan performa toko — per bulan</p>
+        </div>
+        <div class="flex gap-2 flex-wrap items-center">
+          <select id="db-bulan" class="input !py-1 text-xs">
+            ${this._bulanNames.map((m, i) => i === 0 ? '' : `<option value="${i}" ${i === now.getMonth()+1 ? 'selected' : ''}>${m}</option>`).join('')}
+          </select>
+          <input id="db-tahun" type="number" class="input !py-1 text-xs w-24" value="${now.getFullYear()}" min="2020" max="2035"/>
+          <button onclick="Dashboard._render()" class="btn-primary text-xs">Tampilkan</button>
+          <button onclick="Dashboard._render()" class="btn-secondary text-xs">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            Refresh
+          </button>
+        </div>
+      </div>
+      <div id="db-content">${this._skeleton()}</div>`;
+    await this._render();
   },
 
-  async _render(el) {
-    const db = App.db();
-    const [
-      { data: orders,    error: e1 },
-      { data: hppData,   error: e2 },
-      { data: adsData,   error: e3 },
-      { data: opData,    error: e4 },
-      { data: scanToday, error: e5 },
-      { data: releases,  error: e6 },
-      { data: adsImport, error: e7 },
-    ] = await Promise.all([
-      db.from('orders').select('status,gross_revenue,net_revenue,shopee_commission,shopee_service_fee,shopee_ads_fee,shopee_other_fee,order_date,expedition,created_at,qty,sku'),
-      db.from('hpp_items').select('sku,cost_per_unit,created_at').order('created_at', { ascending: false }),
-      db.from('ads').select('cost'),
-      db.from('operational').select('cost'),
-      db.from('scan_logs').select('id,expedition,is_cancelled,scan_date').eq('scan_date', App.todayISO()),
-      db.from('income_releases').select('gross_amount,discount,voucher_seller,net_amount'),
-      db.from('ads_expenses').select('biaya'),
-    ]);
-    if (e1 || e2 || e3 || e4 || e5 || e6 || e7) throw new Error((e1||e2||e3||e4||e5||e6||e7).message);
+  async _render() {
+    const bulan = parseInt(document.getElementById('db-bulan')?.value) || (new Date().getMonth() + 1);
+    const tahun = parseInt(document.getElementById('db-tahun')?.value) || new Date().getFullYear();
+    const el    = document.getElementById('db-content');
+    el.innerHTML = this._skeleton();
 
-    const settings  = await App.getSettings();
-    const modalAwal = parseFloat(settings.modal_awal || 0);
+    try {
+      const db = App.db();
+      const [
+        { data: orders,    error: e1 },
+        { data: hppData,   error: e2 },
+        { data: adsData,   error: e3 },
+        { data: opData,    error: e4 },
+        { data: scanToday, error: e5 },
+        { data: releases,  error: e6 },
+        { data: adsImport, error: e7 },
+      ] = await Promise.all([
+        db.from('orders').select('status,gross_revenue,net_revenue,shopee_commission,shopee_service_fee,shopee_ads_fee,shopee_other_fee,order_date,expedition,created_at,qty,sku'),
+        db.from('hpp_items').select('sku,cost_per_unit,created_at').order('created_at', { ascending: false }),
+        db.from('ads').select('cost,ad_date'),
+        db.from('operational').select('cost,op_date'),
+        db.from('scan_logs').select('id,expedition,is_cancelled,scan_date').eq('scan_date', App.todayISO()),
+        db.from('income_releases').select('gross_amount,discount,voucher_seller,net_amount,release_date'),
+        db.from('ads_expenses').select('biaya,month,year'),
+      ]);
+      if (e1 || e2 || e3 || e4 || e5 || e6 || e7) throw new Error((e1||e2||e3||e4||e5||e6||e7).message);
 
-    const today     = App.todayISO();
-    const all       = orders || [];
-    // "Berhasil" = Selesai ATAU Dibayar (Dibayar diset oleh Import Income untuk pesanan Selesai yang dananya sudah dirilis)
-    const selesai   = all.filter(o => o.status === 'Selesai' || o.status === 'Dibayar');
-    const batal     = all.filter(o => o.status === 'Batal');
-    const gagal     = all.filter(o => o.status === 'Gagal Kirim');
-    const retur     = all.filter(o => o.status === 'Dikembalikan');
-    const diproses  = all.filter(o => o.status === 'Diproses');
-    const diprosesHariIni = diproses.filter(o => (o.created_at || '').slice(0, 10) === today);
+      const settings  = await App.getSettings();
+      const modalAwal = parseFloat(settings.modal_awal || 0);
 
-    const sum       = (arr, key) => arr.reduce((s, r) => s + (+r[key] || 0), 0);
+      // Rentang tanggal bulan yang dipilih (sama seperti Laba Rugi)
+      const dateFrom  = `${tahun}-${String(bulan).padStart(2, '0')}-01`;
+      const nextMonth = new Date(tahun, bulan, 1); // bulan 1-based → index ini = bulan berikutnya
+      const dateTo    = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
+      const inRange   = (d) => !!d && d >= dateFrom && d < dateTo;
 
-    // Omzet & Net Diterima diambil dari income_releases (sama seperti Laba Rugi),
-    // bukan dari orders.gross_revenue/net_revenue — supaya kedua halaman selalu sinkron.
-    // Omzet = gross_amount - diskon. "discount" sudah tersimpan negatif di DB, jadi
-    // secara matematis tinggal ditambahkan (gross_amount + discount).
-    const relList   = releases || [];
-    const omzet     = sum(relList, 'gross_amount') + sum(relList, 'discount');
-    const netRev    = sum(relList, 'net_amount');
-    const potShopee = omzet - netRev;
+      const today     = App.todayISO();
+      const all       = orders || [];
+      const sum       = (arr, key) => arr.reduce((s, r) => s + (+r[key] || 0), 0);
 
-    // HPP = qty pesanan berhasil (Selesai/Dibayar) × HPP terbaru per SKU dari hpp_items
-    // (bukan total seluruh stok yang pernah dibeli) — konsisten dengan logika Laba Rugi.
-    const hppMap = {};
-    (hppData || []).forEach(r => {
-      const k = r.sku;
-      if (!k || k in hppMap) return; // sudah diurutkan terbaru dulu → pertama ditemukan = terbaru
-      hppMap[k] = +r.cost_per_unit || 0;
-    });
-    const freebieDefault = App.getFreebieDefaultPrice(settings);
-    const totalHPP = selesai.reduce((s, o) => {
-      const qty = +o.qty || 1;
-      return s + (App.isFreebieSku(o.sku) ? qty * freebieDefault : qty * App.resolveHppUnit(hppMap, o.sku));
-    }, 0);
+      const hppMap = {};
+      (hppData || []).forEach(r => {
+        const k = r.sku;
+        if (!k || k in hppMap) return; // sudah diurutkan terbaru dulu → pertama ditemukan = terbaru
+        hppMap[k] = +r.cost_per_unit || 0;
+      });
+      const freebieDefault = App.getFreebieDefaultPrice(settings);
+      const hppFor = (o) => {
+        const qty = +o.qty || 1;
+        return App.isFreebieSku(o.sku) ? qty * freebieDefault : qty * App.resolveHppUnit(hppMap, o.sku);
+      };
 
-    const totalAds  = sum(adsData  || [], 'cost') + sum(adsImport || [], 'biaya');
-    const totalOp   = sum(opData   || [], 'cost');
-    const totalExp  = totalHPP + totalAds + totalOp;
-    const labaB     = netRev - totalExp;
-    const sisaKas   = modalAwal + netRev - totalExp;
+      // ── Sisa Kas: akumulasi SEMUA WAKTU, tidak ikut filter bulan ──
+      const selesaiAllTime  = all.filter(o => o.status === 'Selesai' || o.status === 'Dibayar');
+      const totalHPPAllTime = selesaiAllTime.reduce((s, o) => s + hppFor(o), 0);
+      const totalAdsAllTime = sum(adsData || [], 'cost') + sum(adsImport || [], 'biaya');
+      const totalOpAllTime  = sum(opData  || [], 'cost');
+      const netRevAllTime   = sum(releases || [], 'net_amount');
+      const sisaKas         = modalAwal + netRevAllTime - (totalHPPAllTime + totalAdsAllTime + totalOpAllTime);
 
-    const scans     = (scanToday || []).filter(s => !s.is_cancelled);
-    const returnRate = selesai.length > 0 ? (retur.length / selesai.length * 100).toFixed(1) : '0.0';
+      // ── Sisanya: mengikuti filter bulan yang dipilih ──
+      // "Berhasil" = Selesai ATAU Dibayar (Dibayar diset oleh Import Income untuk pesanan Selesai yang dananya sudah dirilis)
+      const monthOrders = all.filter(o => inRange((o.created_at || '').slice(0, 10)));
+      const selesai   = monthOrders.filter(o => o.status === 'Selesai' || o.status === 'Dibayar');
+      const batal     = monthOrders.filter(o => o.status === 'Batal');
+      const gagal     = monthOrders.filter(o => o.status === 'Gagal Kirim');
+      const retur     = monthOrders.filter(o => o.status === 'Dikembalikan');
+      const diproses  = monthOrders.filter(o => o.status === 'Diproses');
+      const diprosesHariIni = diproses.filter(o => (o.created_at || '').slice(0, 10) === today);
 
-    // Daily revenue for chart (last 30 days)
-    const dailyMap = {};
-    selesai.forEach(o => {
-      const d = o.created_at?.slice(0, 10) || '';
-      if (!d) return;
-      if (!dailyMap[d]) dailyMap[d] = { omzet: 0, net: 0 };
-      dailyMap[d].omzet += +o.gross_revenue || 0;
-      dailyMap[d].net   += +o.net_revenue   || 0;
-    });
-    const days = Object.keys(dailyMap).sort().slice(-30);
+      // Omzet & Net Diterima diambil dari income_releases (sama seperti Laba Rugi),
+      // bukan dari orders.gross_revenue/net_revenue — supaya kedua halaman selalu sinkron.
+      // Omzet = gross_amount - diskon. "discount" sudah tersimpan negatif di DB, jadi
+      // secara matematis tinggal ditambahkan (gross_amount + discount).
+      const relList   = (releases || []).filter(r => inRange(r.release_date));
+      const omzet     = sum(relList, 'gross_amount') + sum(relList, 'discount');
+      const netRev    = sum(relList, 'net_amount');
+      const potShopee = omzet - netRev;
+
+      // HPP = qty pesanan berhasil (Selesai/Dibayar) bulan ini × HPP terbaru per SKU dari hpp_items
+      const totalHPP = selesai.reduce((s, o) => s + hppFor(o), 0);
+
+      const adsMonth       = (adsData   || []).filter(a => inRange(a.ad_date));
+      const opMonth        = (opData    || []).filter(o => inRange(o.op_date));
+      const adsImportMonth = (adsImport || []).filter(a => +a.month === bulan && +a.year === tahun);
+      const totalAds  = sum(adsMonth, 'cost') + sum(adsImportMonth, 'biaya');
+      const totalOp   = sum(opMonth, 'cost');
+      const totalExp  = totalHPP + totalAds + totalOp;
+      const labaB     = netRev - totalExp;
+
+      const scans     = (scanToday || []).filter(s => !s.is_cancelled);
+      const returnRate = selesai.length > 0 ? (retur.length / selesai.length * 100).toFixed(1) : '0.0';
+
+      // Tren omzet harian untuk bulan yang dipilih
+      const dailyMap = {};
+      selesai.forEach(o => {
+        const d = o.created_at?.slice(0, 10) || '';
+        if (!d) return;
+        if (!dailyMap[d]) dailyMap[d] = { omzet: 0, net: 0 };
+        dailyMap[d].omzet += +o.gross_revenue || 0;
+        dailyMap[d].net   += +o.net_revenue   || 0;
+      });
+      const daysInMonth = new Date(tahun, bulan, 0).getDate();
+      const lastDay     = (tahun === new Date().getFullYear() && bulan === new Date().getMonth() + 1)
+        ? new Date().getDate() : daysInMonth;
+      const days = Array.from({ length: lastDay }, (_, i) => `${tahun}-${String(bulan).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`);
+      const chartLabel = `${this._bulanNames[bulan]} ${tahun}`;
 
     // Expedition breakdown today
     const expMap = {};
@@ -108,17 +152,6 @@ const Dashboard = {
     const isAdmin = App.isAdmin();
 
     el.innerHTML = `
-      <div class="page-header">
-        <div>
-          <h2>Dashboard</h2>
-          <p>Ringkasan performa toko — semua waktu</p>
-        </div>
-        <button onclick="Dashboard.onLoad()" class="btn-secondary text-xs">
-          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-          Refresh
-        </button>
-      </div>
-
       ${isAdmin ? '' : `
       <!-- Row 1: Financial -->
       <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-5">
@@ -126,7 +159,7 @@ const Dashboard = {
         ${this._bigCard('Net Diterima', App.formatRupiah(netRev), `Pot. Shopee ${App.formatRupiah(potShopee)}`, 'bg-blue-50','text-blue-600','M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z')}
         ${this._bigCard('Total Pengeluaran', App.formatRupiah(totalExp), 'HPP + Iklan + Operasional', 'bg-amber-50','text-amber-600','M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z')}
         ${this._bigCard('Laba Bersih', App.formatRupiah(labaB), 'Net − HPP − Iklan − Ops', labaB>=0?'bg-green-50':'bg-red-50', labaB>=0?'text-green-600':'text-red-600','M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z')}
-        ${this._bigCard('Sisa Kas', App.formatRupiah(sisaKas), 'Modal + Net − Pengeluaran', sisaKas>=0?'bg-sky-50':'bg-red-50', sisaKas>=0?'text-sky-600':'text-red-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
+        ${this._bigCard('Sisa Kas', App.formatRupiah(sisaKas), 'Akumulasi s/d hari ini', sisaKas>=0?'bg-sky-50':'bg-red-50', sisaKas>=0?'text-sky-600':'text-red-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
       </div>`}
 
       <!-- Row 2: Order Status -->
@@ -145,7 +178,7 @@ const Dashboard = {
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
         <div class="card lg:col-span-2">
           <div class="card-header mb-3">
-            <span class="card-title">Tren Omzet — 30 hari terakhir</span>
+            <span class="card-title">Tren Omzet — ${chartLabel}</span>
           </div>
           <div style="height:200px;position:relative"><canvas id="chart-revenue"></canvas></div>
         </div>
@@ -189,9 +222,14 @@ const Dashboard = {
         </div>`}
       </div>`;
 
-    if (!isAdmin) {
-      this._initChartRevenue(days, dailyMap);
-      this._initChartStatus(selesai.length, batal.length, gagal.length, retur.length);
+      if (!isAdmin) {
+        this._initChartRevenue(days, dailyMap);
+        this._initChartStatus(selesai.length, batal.length, gagal.length, retur.length);
+      }
+    } catch (err) {
+      console.error(err);
+      App.toast('Gagal memuat dashboard: ' + err.message, 'error');
+      el.innerHTML = `<div class="card text-red-600 text-sm p-6">Gagal memuat dashboard: ${err.message}</div>`;
     }
   },
 
@@ -233,11 +271,7 @@ const Dashboard = {
   },
 
   _skeleton() {
-    return `<div class="page-header"><div>
-      <div class="skeleton h-6 w-32 mb-2 rounded"></div>
-      <div class="skeleton h-4 w-52 rounded"></div>
-    </div></div>
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+    return `<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
       ${Array(4).fill('<div class="stat-card"><div class="skeleton h-3 w-20 mb-3 rounded"></div><div class="skeleton h-7 w-32 mb-2 rounded"></div><div class="skeleton h-3 w-24 rounded"></div></div>').join('')}
     </div>
     <div class="skeleton h-40 w-full rounded-xl mb-5"></div>`;
