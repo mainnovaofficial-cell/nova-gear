@@ -1106,19 +1106,28 @@ const Penjualan = {
       // ── Cek order yang sudah ada di DB (lookup by order_no+sku) ──
       prog.textContent = 'Mengecek database...';
       const allNos = [...new Set(records.map(r => r.order_no))];
-      const existingMap = new Map(); // "order_no||sku" → id
+      const existingMap     = new Map(); // "order_no||sku" → id
+      const currentActionMap = new Map(); // "order_no||sku" → stok_action saat ini di DB
       const BATCH = 100;
       for (let i = 0; i < allNos.length; i += BATCH) {
         const chunk = allNos.slice(i, i + BATCH);
-        const { data, error } = await App.db().from('orders').select('id, order_no, sku').in('order_no', chunk);
+        const { data, error } = await App.db().from('orders').select('id, order_no, sku, stok_action').in('order_no', chunk);
         if (error) throw error;
         (data || []).forEach(o => {
-          existingMap.set(`${o.order_no}||${o.sku || ''}`, o.id);
+          const key = `${o.order_no}||${o.sku || ''}`;
+          existingMap.set(key, o.id);
+          currentActionMap.set(key, o.stok_action);
         });
       }
 
+      // Pesanan yang stok_action-nya sudah final (Owner sudah konfirmasi manual lewat tombol
+      // "Barang Kembali"/"Tidak Kembali" di tab Perlu Direview) TIDAK BOLEH ditimpa lagi oleh
+      // re-import file retur — kalau tidak, konfirmasi manual yang sudah dilakukan akan hilang
+      // dan stok_action balik lagi jadi "menunggu_barang_kembali".
+      const FINAL_STOK_ACTIONS = ['barang_kembali', 'sudah_keluar_tidak_balik'];
+
       // ── Update pesanan ada / Insert pesanan baru ──
-      let nUpdate = 0, nInsert = 0, nBatal = 0, nGagal = 0, nRetur = 0, nReview = 0;
+      let nUpdate = 0, nInsert = 0, nBatal = 0, nGagal = 0, nRetur = 0, nReview = 0, nSkipFinal = 0;
       const today = App.todayISO();
 
       for (const rec of records) {
@@ -1131,6 +1140,10 @@ const Penjualan = {
         };
 
         if (existingId) {
+          if (FINAL_STOK_ACTIONS.includes(currentActionMap.get(key))) {
+            nSkipFinal++;
+            continue;
+          }
           const { error } = await App.db().from('orders').update(updateFields).eq('id', existingId);
           if (error) throw new Error(`Gagal update ${rec.order_no}: ${error.message}`);
           nUpdate++;
@@ -1168,6 +1181,7 @@ const Penjualan = {
           <div class="text-xs text-gray-500 pt-2 border-t border-gray-100 space-y-0.5">
             <p>Diperbarui: <strong>${nUpdate}</strong> pesanan &nbsp;·&nbsp; Ditambah baru: <strong>${nInsert}</strong> pesanan</p>
             ${nReview ? `<p class="text-amber-600 font-medium">${nReview} pesanan masuk tab "Perlu Direview" (barang belum kembali ke gudang).</p>` : ''}
+            ${nSkipFinal ? `<p class="text-blue-600 font-medium">${nSkipFinal} pesanan dilewati karena sudah dikonfirmasi final (Barang Kembali/Tidak Kembali) — tidak ditimpa.</p>` : ''}
           </div>
         </div>`;
       res.className = 'mt-3 p-3 rounded-lg bg-green-50 border border-green-100 text-sm';
