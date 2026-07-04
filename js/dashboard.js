@@ -51,7 +51,7 @@ const Dashboard = {
         { data: kasPribadi, error: e8 },
         { data: hutangBayar, error: e9 },
       ] = await Promise.all([
-        db.from('orders').select('order_no,status,created_at,qty,sku'),
+        db.from('orders').select('order_no,status,created_at,order_date,qty,sku,source,selling_price'),
         db.from('hpp_items').select('sku,cost_per_unit,total_cost,created_at').order('created_at', { ascending: false }),
         db.from('ads').select('cost,ad_date'),
         db.from('operational').select('cost,op_date'),
@@ -99,6 +99,14 @@ const Dashboard = {
 
       const allReleases = releases || [];
 
+      // Pesanan Manual/Offline (source = 'offline') tidak pernah muncul di income_releases
+      // karena bukan transaksi Shopee — tidak ada potongan platform, jadi Net Diterima-nya
+      // = Harga Jual penuh (selling_price × qty). Ditambahkan terpisah ke Omzet & Net Diterima.
+      const isManualLunas = (o) => o.source === 'offline' && (o.status === 'Selesai' || o.status === 'Diproses');
+      const manualAll       = all.filter(isManualLunas);
+      const manualAmount    = (o) => (+o.selling_price || 0) * (+o.qty || 1);
+      const manualGrossAllTime = manualAll.reduce((s, o) => s + manualAmount(o), 0);
+
       // ── Sisa Kas: akumulasi SEMUA WAKTU, tidak ikut filter bulan ──
       // Basis kas riil (bukan accrual/matching seperti Laba Rugi): HPP yang dihitung adalah
       // TOTAL SEMUA PEMBELIAN STOK (SUM total_cost hpp_items), bukan cuma yang sudah terjual —
@@ -106,7 +114,7 @@ const Dashboard = {
       const totalPembelianHPPAllTime = sum(hppData || [], 'total_cost');
       const totalAdsAllTime = sum(adsData || [], 'cost') + sum(adsImport || [], 'biaya');
       const totalOpAllTime  = sum(opData  || [], 'cost');
-      const netRevAllTime   = sum(allReleases, 'net_amount');
+      const netRevAllTime   = sum(allReleases, 'net_amount') + manualGrossAllTime;
       const totalPriveAllTime   = (kasPribadi || []).filter(r => r.tipe === 'prive').reduce((s, r) => s + (+r.jumlah || 0), 0);
       const totalSetoranAllTime = (kasPribadi || []).filter(r => r.tipe === 'setoran').reduce((s, r) => s + (+r.jumlah || 0), 0);
       // Hanya porsi yang sumbernya Kas Bisnis yang mengurangi Sisa Kas — porsi yang dibayar
@@ -131,9 +139,13 @@ const Dashboard = {
       // Omzet, Net Diterima & HPP diambil dari income_releases (persis logic Laba Rugi —
       // "Harga Asli Produk" = sum(gross_amount) tanpa dikurangi diskon dulu), bukan dari
       // orders.gross_revenue/net_revenue — supaya Dashboard & Laba Rugi selalu sinkron.
-      const relList   = allReleases.filter(r => inRange(r.release_date));
-      const omzet     = sum(relList, 'gross_amount');
-      const netRev    = sum(relList, 'net_amount');
+      // Ditambah pesanan Manual/Offline bulan ini (order_date), yang gross = net penuh
+      // karena tidak ada potongan platform (lihat isManualLunas di atas).
+      const relList     = allReleases.filter(r => inRange(r.release_date));
+      const manualMonth = manualAll.filter(o => inRange(o.order_date));
+      const manualGrossMonth = manualMonth.reduce((s, o) => s + manualAmount(o), 0);
+      const omzet     = sum(relList, 'gross_amount') + manualGrossMonth;
+      const netRev    = sum(relList, 'net_amount')   + manualGrossMonth;
       const potShopee = omzet - netRev;
 
       const totalHPP = hppFromReleases(relList);
@@ -149,8 +161,8 @@ const Dashboard = {
       const scans     = (scanToday || []).filter(s => !s.is_cancelled);
       const returnRate = selesai.length > 0 ? (retur.length / selesai.length * 100).toFixed(1) : '0.0';
 
-      // Tren omzet harian untuk bulan yang dipilih — sumbernya income_releases (release_date),
-      // sama seperti kartu Omzet/Net Diterima, bukan orders.gross_revenue/net_revenue.
+      // Tren omzet harian untuk bulan yang dipilih — sumbernya income_releases (release_date)
+      // + pesanan Manual/Offline (order_date), sama seperti kartu Omzet/Net Diterima di atas.
       const dailyMap = {};
       relList.forEach(r => {
         const d = (r.release_date || '').slice(0, 10);
@@ -158,6 +170,13 @@ const Dashboard = {
         if (!dailyMap[d]) dailyMap[d] = { omzet: 0, net: 0 };
         dailyMap[d].omzet += +r.gross_amount || 0;
         dailyMap[d].net   += +r.net_amount   || 0;
+      });
+      manualMonth.forEach(o => {
+        const d = (o.order_date || '').slice(0, 10);
+        if (!d) return;
+        if (!dailyMap[d]) dailyMap[d] = { omzet: 0, net: 0 };
+        dailyMap[d].omzet += manualAmount(o);
+        dailyMap[d].net   += manualAmount(o);
       });
       const daysInMonth = new Date(tahun, bulan, 0).getDate();
       const lastDay     = (tahun === new Date().getFullYear() && bulan === new Date().getMonth() + 1)

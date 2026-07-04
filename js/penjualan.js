@@ -1615,7 +1615,7 @@ const Penjualan = {
           expedition,
           status,
           stok_action:   this._determineStokAction(status, ''),
-          source:        'shopee',
+          source:        'offline', // form "Tambah Manual" — selalu ditandai bukan transaksi Shopee
           notes:         '',
         };
 

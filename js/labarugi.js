@@ -84,21 +84,34 @@ const LabaRugi = {
       });
 
       // ── 4. Ads & Operasional bulan ini ──
-      const [{ data: ads, error: adsErr }, { data: ops, error: opsErr }, { data: adsImport, error: adsImpErr }] = await Promise.all([
+      const [{ data: ads, error: adsErr }, { data: ops, error: opsErr }, { data: adsImport, error: adsImpErr }, { data: manualOrders, error: manualErr }] = await Promise.all([
         db.from('ads').select('cost,ad_date').gte('ad_date', dateFrom).lt('ad_date', dateTo),
         db.from('operational').select('cost,op_date').gte('op_date', dateFrom).lt('op_date', dateTo),
         db.from('ads_expenses').select('biaya').eq('month', bulan).eq('year', tahun),
+        // Pesanan Manual/Offline bulan ini — tidak pernah muncul di income_releases karena
+        // bukan transaksi Shopee. Tidak ada potongan platform, jadi Net Diterima-nya = Harga
+        // Jual penuh (selling_price × qty). HPP-nya tetap dihitung seperti biasa (tidak berubah)
+        // lewat orderLines di atas — orderLines HANYA match ke income_releases, jadi HPP pesanan
+        // manual ini sengaja TIDAK ikut ditambahkan ke Total Pengeluaran.
+        db.from('orders').select('sku,qty,selling_price')
+          .eq('source', 'offline')
+          .in('status', ['Selesai', 'Diproses'])
+          .gte('order_date', dateFrom).lt('order_date', dateTo),
       ]);
       if (adsErr) throw adsErr;
       if (opsErr) throw opsErr;
       if (adsImpErr) throw adsImpErr;
+      if (manualErr) throw manualErr;
 
       const sum = (arr, key) => (arr || []).reduce((s, r) => s + (+r[key] || 0), 0);
 
-      const grossAmount = sum(releases, 'gross_amount');
-      const discount    = sum(releases, 'discount');
-      const voucher     = sum(releases, 'voucher_seller');
-      const netRev      = sum(releases, 'net_amount');
+      const grossAmount  = sum(releases, 'gross_amount');
+      const discount     = sum(releases, 'discount');
+      const voucher      = sum(releases, 'voucher_seller');
+      const netRevShopee = sum(releases, 'net_amount');
+      const manualGross  = (manualOrders || []).reduce((s, o) => s + (+o.selling_price || 0) * (+o.qty || 1), 0);
+      const omzetTotal   = grossAmount + manualGross;
+      const netRev       = netRevShopee + manualGross;
 
       // HPP = qty × HPP per unit per SKU (hpp_items) — kecuali SKU freebie "-F" → freebie default
       const freebieDefault = App.getFreebieDefaultPrice(settings);
@@ -122,7 +135,7 @@ const LabaRugi = {
       const totalBeban = totalAds + totalOps;
 
       const labaBersih       = labaKotor - totalBeban;
-      const marginPct        = grossAmount > 0 ? (labaBersih / grossAmount * 100) : 0;
+      const marginPct        = omzetTotal > 0 ? (labaBersih / omzetTotal * 100) : 0;
       const totalPemasukan   = netRev;
       const totalPengeluaran = totalHPP + totalAds + totalOps;
       const sisaKas          = modalAwal + totalPemasukan - totalPengeluaran;
@@ -144,10 +157,11 @@ const LabaRugi = {
         <div class="card space-y-0 !p-0 overflow-hidden">
 
           <!-- PENDAPATAN -->
-          ${this._section('PENDAPATAN (INCOME RELEASES)', [
-            { label: 'Harga Asli Produk', value: grossAmount, main: true },
+          ${this._section('PENDAPATAN', [
+            { label: 'Harga Asli Produk (Income Shopee)', value: grossAmount, main: true },
+            { label: 'Penjualan Manual/Offline', value: manualGross, main: true },
           ])}
-          ${this._subsection('Potongan', [
+          ${this._subsection('Potongan (khusus Income Shopee)', [
             { label: 'Total Diskon Produk', value: discount },
             { label: 'Voucher Disponsori Penjual', value: voucher },
           ])}
