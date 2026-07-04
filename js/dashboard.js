@@ -50,7 +50,7 @@ const Dashboard = {
         { data: adsImport, error: e7 },
       ] = await Promise.all([
         db.from('orders').select('order_no,status,created_at,qty,sku'),
-        db.from('hpp_items').select('sku,cost_per_unit,created_at').order('created_at', { ascending: false }),
+        db.from('hpp_items').select('sku,cost_per_unit,total_cost,created_at').order('created_at', { ascending: false }),
         db.from('ads').select('cost,ad_date'),
         db.from('operational').select('cost,op_date'),
         db.from('scan_logs').select('id,expedition,is_cancelled,scan_date').eq('scan_date', App.todayISO()),
@@ -96,11 +96,15 @@ const Dashboard = {
       const allReleases = releases || [];
 
       // ── Sisa Kas: akumulasi SEMUA WAKTU, tidak ikut filter bulan ──
-      const totalHPPAllTime = hppFromReleases(allReleases);
+      // Basis kas riil (bukan accrual/matching seperti Laba Rugi): HPP yang dihitung adalah
+      // TOTAL SEMUA PEMBELIAN STOK (SUM total_cost hpp_items), bukan cuma yang sudah terjual —
+      // karena uang belanja stok sudah keluar dari kas sejak tanggal beli, terlepas laku atau belum.
+      const totalPembelianHPPAllTime = sum(hppData || [], 'total_cost');
       const totalAdsAllTime = sum(adsData || [], 'cost') + sum(adsImport || [], 'biaya');
       const totalOpAllTime  = sum(opData  || [], 'cost');
       const netRevAllTime   = sum(allReleases, 'net_amount');
-      const sisaKas         = modalAwal + netRevAllTime - (totalHPPAllTime + totalAdsAllTime + totalOpAllTime);
+      // TODO: kurangi Total Prive (semua waktu) begitu fitur prive/penarikan pribadi tersedia.
+      const sisaKas         = modalAwal + netRevAllTime - (totalPembelianHPPAllTime + totalAdsAllTime + totalOpAllTime);
 
       // ── Sisanya: mengikuti filter bulan yang dipilih ──
       // "Berhasil" = Selesai ATAU Dibayar (Dibayar diset oleh Import Income untuk pesanan Selesai yang dananya sudah dirilis)
@@ -168,7 +172,7 @@ const Dashboard = {
         ${this._bigCard('Net Diterima', App.formatRupiah(netRev), `Pot. Shopee ${App.formatRupiah(potShopee)}`, 'bg-blue-50','text-blue-600','M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z')}
         ${this._bigCard('Total Pengeluaran', App.formatRupiah(totalExp), 'HPP + Iklan + Operasional', 'bg-amber-50','text-amber-600','M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z')}
         ${this._bigCard('Laba Bersih', App.formatRupiah(labaB), 'Net − HPP − Iklan − Ops', labaB>=0?'bg-green-50':'bg-red-50', labaB>=0?'text-green-600':'text-red-600','M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z')}
-        ${this._bigCard('Sisa Kas', App.formatRupiah(sisaKas), 'Akumulasi s/d hari ini', sisaKas>=0?'bg-sky-50':'bg-red-50', sisaKas>=0?'text-sky-600':'text-red-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
+        ${this._bigCard('Sisa Kas', App.formatRupiah(sisaKas), 'Kas = Net Diterima - Total Pembelian Stok - Iklan - Operasional - Prive (real cash basis)', sisaKas>=0?'bg-sky-50':'bg-red-50', sisaKas>=0?'text-sky-600':'text-red-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
       </div>`}
 
       <!-- Row 2: Order Status -->
@@ -248,7 +252,7 @@ const Dashboard = {
         <div class="min-w-0">
           <p class="stat-label">${title}</p>
           <p class="stat-value text-money truncate">${value}</p>
-          <p class="stat-sub truncate">${sub}</p>
+          <p class="stat-sub truncate" title="${sub}">${sub}</p>
         </div>
         <div class="w-10 h-10 rounded-xl ${bg} flex items-center justify-center flex-shrink-0 mt-0.5">
           <svg class="w-5 h-5 ${tc}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
