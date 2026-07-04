@@ -48,6 +48,8 @@ const Dashboard = {
         { data: scanToday, error: e5 },
         { data: releases,  error: e6 },
         { data: adsImport, error: e7 },
+        { data: kasPribadi, error: e8 },
+        { data: hutangBayar, error: e9 },
       ] = await Promise.all([
         db.from('orders').select('order_no,status,created_at,qty,sku'),
         db.from('hpp_items').select('sku,cost_per_unit,total_cost,created_at').order('created_at', { ascending: false }),
@@ -56,8 +58,10 @@ const Dashboard = {
         db.from('scan_logs').select('id,expedition,is_cancelled,scan_date').eq('scan_date', App.todayISO()),
         db.from('income_releases').select('order_no,gross_amount,discount,voucher_seller,net_amount,release_date'),
         db.from('ads_expenses').select('biaya,month,year'),
+        db.from('kas_pribadi').select('tipe,jumlah'),
+        db.from('hutang_pembayaran').select('sumber_kas_bisnis'),
       ]);
-      if (e1 || e2 || e3 || e4 || e5 || e6 || e7) throw new Error((e1||e2||e3||e4||e5||e6||e7).message);
+      if (e1 || e2 || e3 || e4 || e5 || e6 || e7 || e8 || e9) throw new Error((e1||e2||e3||e4||e5||e6||e7||e8||e9).message);
 
       const settings  = await App.getSettings();
       const modalAwal = parseFloat(settings.modal_awal || 0);
@@ -103,8 +107,16 @@ const Dashboard = {
       const totalAdsAllTime = sum(adsData || [], 'cost') + sum(adsImport || [], 'biaya');
       const totalOpAllTime  = sum(opData  || [], 'cost');
       const netRevAllTime   = sum(allReleases, 'net_amount');
-      // TODO: kurangi Total Prive (semua waktu) begitu fitur prive/penarikan pribadi tersedia.
-      const sisaKas         = modalAwal + netRevAllTime - (totalPembelianHPPAllTime + totalAdsAllTime + totalOpAllTime);
+      const totalPriveAllTime   = (kasPribadi || []).filter(r => r.tipe === 'prive').reduce((s, r) => s + (+r.jumlah || 0), 0);
+      const totalSetoranAllTime = (kasPribadi || []).filter(r => r.tipe === 'setoran').reduce((s, r) => s + (+r.jumlah || 0), 0);
+      // Hanya porsi yang sumbernya Kas Bisnis yang mengurangi Sisa Kas — porsi yang dibayar
+      // dari Setoran Pribadi tidak dikurangi lagi karena uangnya memang tidak pernah keluar
+      // dari Kas Bisnis (dibayar langsung dari kantong pribadi Owner).
+      const totalBayarHutangKasBisnisAllTime = sum(hutangBayar || [], 'sumber_kas_bisnis');
+      const sisaKas = modalAwal + netRevAllTime
+        - totalPembelianHPPAllTime - totalAdsAllTime - totalOpAllTime
+        - totalPriveAllTime + totalSetoranAllTime
+        - totalBayarHutangKasBisnisAllTime;
 
       // ── Sisanya: mengikuti filter bulan yang dipilih ──
       // "Berhasil" = Selesai ATAU Dibayar (Dibayar diset oleh Import Income untuk pesanan Selesai yang dananya sudah dirilis)
@@ -172,7 +184,7 @@ const Dashboard = {
         ${this._bigCard('Net Diterima', App.formatRupiah(netRev), `Pot. Shopee ${App.formatRupiah(potShopee)}`, 'bg-blue-50','text-blue-600','M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z')}
         ${this._bigCard('Total Pengeluaran', App.formatRupiah(totalExp), 'HPP + Iklan + Operasional', 'bg-amber-50','text-amber-600','M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z')}
         ${this._bigCard('Laba Bersih', App.formatRupiah(labaB), 'Net − HPP − Iklan − Ops', labaB>=0?'bg-green-50':'bg-red-50', labaB>=0?'text-green-600':'text-red-600','M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z')}
-        ${this._bigCard('Sisa Kas', App.formatRupiah(sisaKas), 'Kas = Net Diterima - Total Pembelian Stok - Iklan - Operasional - Prive (real cash basis)', sisaKas>=0?'bg-sky-50':'bg-red-50', sisaKas>=0?'text-sky-600':'text-red-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
+        ${this._bigCard('Sisa Kas', App.formatRupiah(sisaKas), 'Kas = Net Diterima - Pembelian Stok - Iklan - Operasional - Prive + Setoran - Bayar Hutang (real cash basis)', sisaKas>=0?'bg-sky-50':'bg-red-50', sisaKas>=0?'text-sky-600':'text-red-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
       </div>`}
 
       <!-- Row 2: Order Status -->

@@ -483,6 +483,52 @@ where o.order_no = r.order_no
 -- tanpa bergantung pada asumsi "Dibayar selalu berasal dari Selesai".
 
 -- ═══════════════════════════════════════════════════════
+--  MIGRASI v11 — Kas Pribadi (Prive & Setoran) dan Hutang & Cicilan
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- ── Kas Pribadi: penarikan pribadi (Prive) & modal masuk (Setoran) ──
+create table if not exists kas_pribadi (
+  id          uuid primary key default gen_random_uuid(),
+  tanggal     date not null,
+  tipe        text not null check (tipe in ('prive', 'setoran')),
+  jumlah      numeric(14,2) default 0,
+  keterangan  text,
+  created_at  timestamptz default now()
+);
+
+create index if not exists kas_pribadi_tanggal_idx on kas_pribadi(tanggal);
+create index if not exists kas_pribadi_tipe_idx    on kas_pribadi(tipe);
+
+-- ── Hutang: daftar pinjaman/cicilan ──
+create table if not exists hutang (
+  id              uuid primary key default gen_random_uuid(),
+  nama_hutang     text not null,
+  jumlah_total    numeric(14,2) default 0,
+  jumlah_cicilan  integer default 1,
+  created_at      timestamptz default now()
+);
+
+-- ── Pembayaran cicilan hutang. Setiap pembayaran bisa displit sumber dananya
+--    antara Kas Bisnis dan Setoran Pribadi (jumlah = sumber_kas_bisnis + sumber_setoran_pribadi).
+--    Lihat js/dashboard.js: hanya sumber_kas_bisnis yang mengurangi Sisa Kas — porsi
+--    sumber_setoran_pribadi tidak dikurangi karena uangnya memang tidak pernah keluar
+--    dari Kas Bisnis (dibayar langsung dari kantong pribadi Owner).
+create table if not exists hutang_pembayaran (
+  id                      uuid primary key default gen_random_uuid(),
+  hutang_id               uuid references hutang(id) on delete cascade,
+  tanggal                 date not null,
+  jumlah                  numeric(14,2) default 0,
+  sumber_kas_bisnis       numeric(14,2) default 0,
+  sumber_setoran_pribadi  numeric(14,2) default 0,
+  keterangan              text,
+  created_at              timestamptz default now()
+);
+
+create index if not exists hutang_pembayaran_hutang_id_idx on hutang_pembayaran(hutang_id);
+create index if not exists hutang_pembayaran_tanggal_idx   on hutang_pembayaran(tanggal);
+
+-- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup
 --  Untuk production, gunakan Supabase Auth + RLS policies.
 --  Untuk sementara (anon key): disable RLS di table settings.
@@ -497,6 +543,9 @@ where o.order_no = r.order_no
 -- alter table ads_expenses enable row level security;
 -- alter table operational enable row level security;
 -- alter table settings    enable row level security;
+-- alter table kas_pribadi enable row level security;
+-- alter table hutang      enable row level security;
+-- alter table hutang_pembayaran enable row level security;
 
 -- Policy allow all untuk anon (development — ganti untuk production)
 -- create policy "allow_all" on orders      for all using (true) with check (true);
@@ -507,3 +556,6 @@ where o.order_no = r.order_no
 -- create policy "allow_all" on ads_expenses for all using (true) with check (true);
 -- create policy "allow_all" on operational for all using (true) with check (true);
 -- create policy "allow_all" on settings    for all using (true) with check (true);
+-- create policy "allow_all" on kas_pribadi for all using (true) with check (true);
+-- create policy "allow_all" on hutang      for all using (true) with check (true);
+-- create policy "allow_all" on hutang_pembayaran for all using (true) with check (true);
