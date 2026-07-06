@@ -329,6 +329,7 @@ const App = {
       analisis:    'Analisis Produk',
       labarugi:    'Laba Rugi',
       pengaturan:  'Pengaturan',
+      snapshot:    'Snapshot',
     };
     document.getElementById('page-title').textContent = titles[page] || page;
 
@@ -348,6 +349,7 @@ const App = {
       analisis:    typeof Analisis    !== 'undefined' ? Analisis    : null,
       labarugi:    typeof LabaRugi    !== 'undefined' ? LabaRugi    : null,
       pengaturan:  typeof Pengaturan  !== 'undefined' ? Pengaturan  : null,
+      snapshot:    typeof Snapshot    !== 'undefined' ? Snapshot    : null,
     };
 
     const mod = moduleMap[page];

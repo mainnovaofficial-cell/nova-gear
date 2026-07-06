@@ -529,6 +529,81 @@ create index if not exists hutang_pembayaran_hutang_id_idx on hutang_pembayaran(
 create index if not exists hutang_pembayaran_tanggal_idx   on hutang_pembayaran(tanggal);
 
 -- ═══════════════════════════════════════════════════════
+--  MIGRASI v12 — Snapshot & Restore untuk tabel orders
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- ── Snapshot penuh tabel orders, diambil otomatis sebelum tiap proses import
+--    (Import Harian, Import Mingguan, Import Retur Lengkap, Import Income),
+--    supaya Owner bisa membatalkan hasil import yang salah tanpa menelusuri
+--    manual satu-satu.
+create table if not exists orders_snapshot (
+  id              uuid primary key default gen_random_uuid(),
+  snapshot_label  text not null,
+  snapshot_data   jsonb not null,
+  row_count       integer default 0,
+  created_at      timestamptz default now()
+);
+
+create index if not exists orders_snapshot_created_at_idx on orders_snapshot(created_at desc);
+
+-- ── Buat snapshot baru berisi seluruh isi tabel orders saat ini, lalu
+--    hapus snapshot terlama kalau sudah lebih dari 20 (auto-cleanup).
+--    Dijalankan sebagai satu function call → konsisten walau tabel orders
+--    besar (jsonb_agg mengambil seluruh baris dalam satu snapshot MVCC).
+create or replace function create_orders_snapshot(p_label text)
+returns uuid
+language plpgsql
+security definer
+as $$
+declare
+  v_id   uuid;
+  v_data jsonb;
+begin
+  select coalesce(jsonb_agg(o), '[]'::jsonb) into v_data from orders o;
+
+  insert into orders_snapshot (snapshot_label, snapshot_data, row_count)
+  values (p_label, v_data, jsonb_array_length(v_data))
+  returning id into v_id;
+
+  delete from orders_snapshot
+  where id not in (
+    select id from orders_snapshot order by created_at desc limit 20
+  );
+
+  return v_id;
+end;
+$$;
+
+grant execute on function create_orders_snapshot(text) to anon, authenticated;
+
+-- ── Restore: ganti seluruh isi tabel orders dengan snapshot_data yang dipilih.
+--    Berjalan dalam satu transaction (implicit per-function-call di Postgres) —
+--    kalau insert gagal di tengah jalan, delete ikut di-rollback (tidak ada
+--    kondisi tanggung antara "sudah dihapus" tapi "belum ke-insert ulang").
+create or replace function restore_orders_snapshot(p_snapshot_id uuid)
+returns void
+language plpgsql
+security definer
+as $$
+begin
+  if not exists (select 1 from orders_snapshot where id = p_snapshot_id) then
+    raise exception 'Snapshot tidak ditemukan';
+  end if;
+
+  delete from orders;
+
+  insert into orders
+  select * from jsonb_populate_recordset(
+    null::orders,
+    (select snapshot_data from orders_snapshot where id = p_snapshot_id)
+  );
+end;
+$$;
+
+grant execute on function restore_orders_snapshot(uuid) to anon, authenticated;
+
+-- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup
 --  Untuk production, gunakan Supabase Auth + RLS policies.
 --  Untuk sementara (anon key): disable RLS di table settings.

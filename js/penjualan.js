@@ -746,11 +746,13 @@ const Penjualan = {
     if (!file) return;
     const prog = document.getElementById('imp-progress');
     const res  = document.getElementById('imp-result');
-    prog.textContent = 'Membaca file...';
+    prog.textContent = 'Membuat snapshot...';
     prog.classList.remove('hidden');
     res.classList.add('hidden');
+    await Snapshot.createBeforeImport(mode === 'harian' ? 'Import Harian' : 'Import Mingguan');
 
     try {
+      prog.textContent = 'Membaca file...';
       const buf  = await file.arrayBuffer();
       const wb   = XLSX.read(buf, { type: 'array', cellDates: true });
       const ws   = wb.Sheets[wb.SheetNames[0]];
@@ -1024,8 +1026,10 @@ const Penjualan = {
 
     const prog = document.getElementById('ret-progress');
     const res  = document.getElementById('ret-result');
+    prog.textContent = 'Membuat snapshot...';
     prog.classList.remove('hidden');
     res.classList.add('hidden');
+    await Snapshot.createBeforeImport('Import Retur Lengkap');
 
     const readXlsx = async file => {
       const buf = await file.arrayBuffer();
@@ -1254,11 +1258,13 @@ const Penjualan = {
     const bulan = parseInt(document.getElementById('inc-bulan').value);
     const tahun = parseInt(document.getElementById('inc-tahun').value);
 
-    prog.textContent = 'Membaca file...';
+    prog.textContent = 'Membuat snapshot...';
     prog.classList.remove('hidden');
     res.classList.add('hidden');
+    await Snapshot.createBeforeImport('Import Income');
 
     try {
+      prog.textContent = 'Membaca file...';
       const buf = await file.arrayBuffer();
       const wb  = XLSX.read(buf, { type: 'array', cellDates: true });
 
