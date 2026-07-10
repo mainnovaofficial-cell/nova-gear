@@ -35,7 +35,7 @@ const LabaRugi = {
     try {
       const db = App.db();
       const settings  = await App.getSettings();
-      const modalAwal = parseFloat(settings.modal_awal || 0);
+      const modalAwal = parseFloat(settings.modal_awal_bca || 0) + parseFloat(settings.modal_awal_shopee || 0);
 
       const dateFrom = `${tahun}-${String(bulan).padStart(2, '0')}-01`;
       const nextMonth = new Date(tahun, bulan, 1); // bulan 1-based → index ini = bulan berikutnya

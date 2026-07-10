@@ -604,6 +604,37 @@ $$;
 grant execute on function restore_orders_snapshot(uuid) to anon, authenticated;
 
 -- ═══════════════════════════════════════════════════════
+--  MIGRASI v13 — Saldo & Penarikan (pisah tracking Saldo BCA vs Saldo Shopee)
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- ── Penarikan Saldo: pencatatan tarik dana dari Saldo Shopee ke Saldo BCA.
+--    Semua pengeluaran (HPP, Iklan, Operasional, Prive, Bayar Hutang) diasumsikan
+--    selalu dibayar dari Saldo BCA — Owner selalu tarik ke BCA dulu baru bayar-bayar.
+--    Lihat js/dashboard.js untuk formula Saldo BCA & Saldo Shopee.
+create table if not exists penarikan_saldo (
+  id          uuid primary key default gen_random_uuid(),
+  tanggal     date not null,
+  jumlah      numeric(14,2) default 0,
+  keterangan  text,
+  created_at  timestamptz default now()
+);
+
+create index if not exists penarikan_saldo_tanggal_idx on penarikan_saldo(tanggal);
+
+-- ── Pisahkan Modal Awal jadi 2 komponen: modal_awal_bca & modal_awal_shopee.
+--    modal_awal_shopee diseed dari nilai modal_awal lama (asumsi awal: seluruh modal
+--    awal ada di Shopee) — Owner bisa koreksi manual di halaman Pengaturan setelah migrasi.
+--    Key modal_awal lama tetap dibiarkan ada di tabel settings, tapi sudah tidak dipakai kode.
+insert into settings (key, value)
+select 'modal_awal_bca', '0'
+where not exists (select 1 from settings where key = 'modal_awal_bca');
+
+insert into settings (key, value)
+select 'modal_awal_shopee', coalesce((select value from settings where key = 'modal_awal'), '0')
+where not exists (select 1 from settings where key = 'modal_awal_shopee');
+
+-- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup
 --  Untuk production, gunakan Supabase Auth + RLS policies.
 --  Untuk sementara (anon key): disable RLS di table settings.
@@ -621,6 +652,7 @@ grant execute on function restore_orders_snapshot(uuid) to anon, authenticated;
 -- alter table kas_pribadi enable row level security;
 -- alter table hutang      enable row level security;
 -- alter table hutang_pembayaran enable row level security;
+-- alter table penarikan_saldo enable row level security;
 
 -- Policy allow all untuk anon (development — ganti untuk production)
 -- create policy "allow_all" on orders      for all using (true) with check (true);
@@ -634,3 +666,4 @@ grant execute on function restore_orders_snapshot(uuid) to anon, authenticated;
 -- create policy "allow_all" on kas_pribadi for all using (true) with check (true);
 -- create policy "allow_all" on hutang      for all using (true) with check (true);
 -- create policy "allow_all" on hutang_pembayaran for all using (true) with check (true);
+-- create policy "allow_all" on penarikan_saldo for all using (true) with check (true);

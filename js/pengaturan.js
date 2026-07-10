@@ -47,11 +47,16 @@ const Pengaturan = {
       <!-- Modal Awal -->
       <div class="card">
         <h3 class="card-title mb-4">Modal Awal</h3>
-        <div><label class="label">Modal Awal (Rp)</label>
-          <input id="s-modal-awal" type="number" class="input" value="${s.modal_awal||0}" step="1000" min="0"/>
+        <div class="space-y-4">
+          <div><label class="label">Modal Awal BCA (Rp)</label>
+            <input id="s-modal-awal-bca" type="number" class="input" value="${s.modal_awal_bca||0}" step="1000" min="0"/>
+          </div>
+          <div><label class="label">Modal Awal Shopee (Rp)</label>
+            <input id="s-modal-awal-shopee" type="number" class="input" value="${s.modal_awal_shopee||0}" step="1000" min="0"/>
+          </div>
         </div>
-        <p class="text-xs text-gray-400 mt-2">Digunakan untuk menghitung Posisi Kas di Laba Rugi.</p>
-        <button onclick="Pengaturan.saveGroup(['modal_awal'])" class="btn-primary text-xs mt-4">Simpan</button>
+        <p class="text-xs text-gray-400 mt-2">Digunakan untuk menghitung Saldo BCA, Saldo Shopee (Dashboard), dan Posisi Kas (Laba Rugi).</p>
+        <button onclick="Pengaturan.saveGroup(['modal_awal_bca','modal_awal_shopee'])" class="btn-primary text-xs mt-4">Simpan</button>
       </div>
 
       <!-- Kurs Yuan -->
@@ -150,7 +155,8 @@ const Pengaturan = {
     const fieldMap = {
       store_name:                 's-store-name',
       yuan_rate:                  's-yuan-rate',
-      modal_awal:                 's-modal-awal',
+      modal_awal_bca:             's-modal-awal-bca',
+      modal_awal_shopee:          's-modal-awal-shopee',
       freebie_default_price:      's-freebie-price',
     };
 
