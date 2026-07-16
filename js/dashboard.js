@@ -114,10 +114,14 @@ const Dashboard = {
       // Basis kas riil (bukan accrual/matching seperti Laba Rugi): HPP yang dihitung adalah
       // TOTAL SEMUA PEMBELIAN STOK (SUM total_cost hpp_items), bukan cuma yang sudah terjual —
       // karena uang belanja stok sudah keluar dari kas sejak tanggal beli, terlepas laku atau belum.
-      // Semua pengeluaran (HPP, Iklan, Operasional, Prive, Bayar Hutang) diasumsikan selalu
+      // Semua pengeluaran (HPP, Operasional, Prive, Bayar Hutang) diasumsikan selalu
       // dibayar dari Saldo BCA — Owner selalu tarik dana dari Shopee ke BCA dulu baru bayar-bayar.
+      // Iklan (ads_expenses) TIDAK dikurangkan di sini — sejak Shopee Ads dibayar pakai Kartu
+      // Kredit (bukan potong otomatis dari Saldo Shopee/BCA lagi), data Iklan yang diimport
+      // cuma dipakai untuk laporan performa (ACOS, konversi, dll), bukan kalkulasi kas.
+      // Saat tagihan Kartu Kredit untuk Iklan dibayar (via Saldo BCA), itu dicatat manual
+      // sebagai Operasional oleh Owner — baru masuk ke totalOpAllTime di bawah.
       const totalPembelianHPPAllTime = sum(hppData || [], 'total_cost');
-      const totalAdsAllTime = sum(adsData || [], 'cost') + sum(adsImport || [], 'biaya');
       const totalOpAllTime  = sum(opData  || [], 'cost');
       const netRevAllTime   = sum(allReleases, 'net_amount') + manualGrossAllTime;
       const totalPriveAllTime   = (kasPribadi || []).filter(r => r.tipe === 'prive').reduce((s, r) => s + (+r.jumlah || 0), 0);
@@ -130,7 +134,7 @@ const Dashboard = {
 
       const saldoShopee = modalAwalShopee + netRevAllTime - totalPenarikanAllTime;
       const saldoBCA = modalAwalBca + totalPenarikanAllTime
-        - totalPembelianHPPAllTime - totalAdsAllTime - totalOpAllTime
+        - totalPembelianHPPAllTime - totalOpAllTime
         - totalPriveAllTime + totalSetoranAllTime
         - totalBayarHutangKasBisnisAllTime;
       const sisaKas = saldoShopee + saldoBCA;
@@ -217,7 +221,7 @@ const Dashboard = {
       <!-- Row 1b: Saldo & Penarikan -->
       <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
         ${this._bigCard('Saldo Shopee', App.formatRupiah(saldoShopee), 'Modal Awal + Net Diterima - Penarikan (all-time)', 'bg-orange-50','text-orange-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
-        ${this._bigCard('Saldo BCA', App.formatRupiah(saldoBCA), 'Modal Awal + Penarikan - Semua Pengeluaran (all-time)', 'bg-indigo-50','text-indigo-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
+        ${this._bigCard('Saldo BCA', App.formatRupiah(saldoBCA), 'Modal Awal + Penarikan - HPP/Ops/Prive/Hutang (all-time, tanpa Iklan)', 'bg-indigo-50','text-indigo-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
         ${this._bigCard('Sisa Kas', App.formatRupiah(sisaKas), 'Saldo Shopee + Saldo BCA (total gabungan)', sisaKas>=0?'bg-sky-50':'bg-red-50', sisaKas>=0?'text-sky-600':'text-red-600','M9 8h6m-5 4h4m1 8H8a2 2 0 01-2-2V6a2 2 0 012-2h4.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V18a2 2 0 01-2 2z')}
       </div>`}
 
