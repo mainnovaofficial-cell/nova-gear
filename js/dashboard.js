@@ -108,7 +108,6 @@ const Dashboard = {
       const isManualLunas = (o) => o.source === 'offline' && (o.status === 'Selesai' || o.status === 'Diproses');
       const manualAll       = all.filter(isManualLunas);
       const manualAmount    = (o) => (+o.selling_price || 0) * (+o.qty || 1);
-      const manualGrossAllTime = manualAll.reduce((s, o) => s + manualAmount(o), 0);
 
       // ── Saldo Shopee & Saldo BCA: akumulasi SEMUA WAKTU, tidak ikut filter bulan ──
       // Basis kas riil (bukan accrual/matching seperti Laba Rugi): HPP yang dihitung adalah
@@ -123,7 +122,11 @@ const Dashboard = {
       // sebagai Operasional oleh Owner — baru masuk ke totalOpAllTime di bawah.
       const totalPembelianHPPAllTime = sum(hppData || [], 'total_cost');
       const totalOpAllTime  = sum(opData  || [], 'cost');
-      const netRevAllTime   = sum(allReleases, 'net_amount') + manualGrossAllTime;
+      // HANYA dari income_releases (transaksi Shopee) — pesanan Manual/Offline dibayar
+      // cash/transfer langsung ke BCA atau kantong pribadi, uangnya tidak pernah masuk
+      // ke Saldo Shopee. Net Diterima manual tetap dihitung di KPI "Net Diterima" bulanan
+      // (untuk Laba Rugi/accrual) via manualGrossMonth di bawah — hanya dikecualikan di sini.
+      const netRevAllTime   = sum(allReleases, 'net_amount');
       const totalPriveAllTime   = (kasPribadi || []).filter(r => r.tipe === 'prive').reduce((s, r) => s + (+r.jumlah || 0), 0);
       const totalSetoranAllTime = (kasPribadi || []).filter(r => r.tipe === 'setoran').reduce((s, r) => s + (+r.jumlah || 0), 0);
       // Hanya porsi yang sumbernya Kas Bisnis yang mengurangi Saldo BCA — porsi yang dibayar
@@ -220,7 +223,7 @@ const Dashboard = {
 
       <!-- Row 1b: Saldo & Penarikan -->
       <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
-        ${this._bigCard('Saldo Shopee', App.formatRupiah(saldoShopee), 'Modal Awal + Net Diterima - Penarikan (all-time)', 'bg-orange-50','text-orange-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
+        ${this._bigCard('Saldo Shopee', App.formatRupiah(saldoShopee), 'Modal Awal + Net Diterima Shopee - Penarikan (all-time, tanpa Manual/Offline)', 'bg-orange-50','text-orange-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
         ${this._bigCard('Saldo BCA', App.formatRupiah(saldoBCA), 'Modal Awal + Penarikan - HPP/Ops/Prive/Hutang (all-time, tanpa Iklan)', 'bg-indigo-50','text-indigo-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
         ${this._bigCard('Sisa Kas', App.formatRupiah(sisaKas), 'Saldo Shopee + Saldo BCA (total gabungan)', sisaKas>=0?'bg-sky-50':'bg-red-50', sisaKas>=0?'text-sky-600':'text-red-600','M9 8h6m-5 4h4m1 8H8a2 2 0 01-2-2V6a2 2 0 012-2h4.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V18a2 2 0 01-2 2z')}
       </div>`}
