@@ -1569,6 +1569,12 @@ const Penjualan = {
             ${['Diproses','Selesai','Gagal Kirim','Batal'].map(s=>`<option>${s}</option>`).join('')}
           </select>
         </div>
+        <div><label class="label">Sumber</label>
+          <select id="mm-source" class="input">
+            <option value="offline" selected>Offline</option>
+            <option value="shopee">Shopee (terlewat saat Import)</option>
+          </select>
+        </div>
       </div>
       <div class="flex items-center justify-between mb-2">
         <span class="label !mb-0">Produk</span>
@@ -1631,6 +1637,7 @@ const Penjualan = {
     const orderDate  = document.getElementById('mm-date').value;
     const expedition = document.getElementById('mm-exp').value.trim();
     const status     = document.getElementById('mm-status').value;
+    const source     = document.getElementById('mm-source').value;
 
     const rows = this._manualRows
       .map(r => ({
@@ -1660,7 +1667,7 @@ const Penjualan = {
           expedition,
           status,
           stok_action:   this._determineStokAction(status, ''),
-          source:        'offline', // form "Tambah Manual" — selalu ditandai bukan transaksi Shopee
+          source,        // dari dropdown "Sumber" — default "offline", bisa dipilih "shopee" untuk pesanan Shopee yang terlewat import
           notes:         '',
         };
 
