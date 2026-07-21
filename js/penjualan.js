@@ -1107,11 +1107,19 @@ const Penjualan = {
         return;
       }
 
-      // ── Cek order yang sudah ada di DB (lookup by order_no+sku) ──
+      // ── Cek order yang sudah ada di DB ──
+      // Kunci utama pencocokan adalah order_no, BUKAN order_no+sku: kolom SKU di file
+      // retur Shopee (mis. "SKU Induk") sering beda istilah/format dari SKU yang
+      // tersimpan saat import awal ("Nomor Referensi SKU"), jadi kalau hanya
+      // mengandalkan kecocokan SKU persis, pesanan lama bisa gagal ketemu dan malah
+      // ke-insert lagi sebagai baris baru (duplikat) dengan created_at = waktu import
+      // sekarang — padahal pesanannya sudah ada. order_no+sku tetap dipakai duluan
+      // kalau persis cocok, byOrderNo jadi fallback.
       prog.textContent = 'Mengecek database...';
       const allNos = [...new Set(records.map(r => r.order_no))];
-      const existingMap     = new Map(); // "order_no||sku" → id
+      const existingMap     = new Map(); // "order_no||sku" → id (exact match)
       const currentActionMap = new Map(); // "order_no||sku" → stok_action saat ini di DB
+      const byOrderNo        = new Map(); // order_no → [{ id, sku, stok_action }]
       const BATCH = 100;
       for (let i = 0; i < allNos.length; i += BATCH) {
         const chunk = allNos.slice(i, i + BATCH);
@@ -1121,6 +1129,8 @@ const Penjualan = {
           const key = `${o.order_no}||${o.sku || ''}`;
           existingMap.set(key, o.id);
           currentActionMap.set(key, o.stok_action);
+          if (!byOrderNo.has(o.order_no)) byOrderNo.set(o.order_no, []);
+          byOrderNo.get(o.order_no).push({ id: o.id, sku: o.sku, stok_action: o.stok_action });
         });
       }
 
@@ -1135,24 +1145,35 @@ const Penjualan = {
       const today = App.todayISO();
 
       for (const rec of records) {
-        const key        = `${rec.order_no}||${rec.sku || ''}`;
-        const existingId = existingMap.get(key);
+        const key = `${rec.order_no}||${rec.sku || ''}`;
         const updateFields = {
           status:        rec.status,
           stok_action:   rec.stok_action,
           cancel_reason: rec.cancel_reason || null,
         };
 
-        if (existingId) {
-          if (FINAL_STOK_ACTIONS.includes(currentActionMap.get(key))) {
-            nSkipFinal++;
-            continue;
+        // Cocokkan order_no+sku persis dulu; kalau tidak ketemu, fallback ke semua
+        // baris yang order_no-nya sama (lihat catatan di atas soal beda istilah SKU).
+        const matches = existingMap.has(key)
+          ? [{ id: existingMap.get(key), sku: rec.sku, stok_action: currentActionMap.get(key) }]
+          : (byOrderNo.get(rec.order_no) || []);
+
+        if (matches.length) {
+          // Pesanan SUDAH ADA → update HANYA status/stok_action/cancel_reason.
+          // created_at TIDAK disentuh sama sekali supaya pesanan tetap masuk
+          // Rekap Harian di tanggal created_at aslinya, bukan tanggal import ini.
+          for (const m of matches) {
+            if (FINAL_STOK_ACTIONS.includes(m.stok_action)) {
+              nSkipFinal++;
+              continue;
+            }
+            const { error } = await App.db().from('orders').update(updateFields).eq('id', m.id);
+            if (error) throw new Error(`Gagal update ${rec.order_no}: ${error.message}`);
+            nUpdate++;
           }
-          const { error } = await App.db().from('orders').update(updateFields).eq('id', existingId);
-          if (error) throw new Error(`Gagal update ${rec.order_no}: ${error.message}`);
-          nUpdate++;
         } else {
-          const { error } = await App.db().from('orders').insert({
+          // Pesanan BELUM ADA sama sekali → insert baru, created_at pakai default now().
+          const { data: inserted, error } = await App.db().from('orders').insert({
             order_no:      rec.order_no,
             order_date:    today,
             product_name:  rec.product_name || '-',
@@ -1162,9 +1183,13 @@ const Penjualan = {
             gross_revenue: 0,
             source:        'shopee',
             ...updateFields,
-          });
+          }).select('id').single();
           if (error) throw new Error(`Gagal insert ${rec.order_no}: ${error.message}`);
-          existingMap.set(key, true); // tandai agar insert ke-2 (baris duplikat di file) jadi update
+          // Tandai sudah ada supaya baris duplikat lain di file (order_no sama) di-update, bukan insert lagi.
+          existingMap.set(key, inserted.id);
+          currentActionMap.set(key, rec.stok_action);
+          if (!byOrderNo.has(rec.order_no)) byOrderNo.set(rec.order_no, []);
+          byOrderNo.get(rec.order_no).push({ id: inserted.id, sku: rec.sku, stok_action: rec.stok_action });
           nInsert++;
         }
 
