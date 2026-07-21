@@ -445,7 +445,7 @@ const Penjualan = {
           <table class="data-table">
             <thead><tr>
               <th>No. Pesanan</th><th>Tanggal</th><th>Produk</th><th>SKU</th><th class="text-center">Qty</th>
-              <th>Alasan</th>${App.isOwner() ? '<th>Aksi</th>' : ''}
+              <th>Alasan</th>${(App.isOwner() || App.isAdmin()) ? '<th>Aksi</th>' : ''}
             </tr></thead>
             <tbody>${rows.map(o => `<tr>
               <td class="font-mono text-xs text-gray-500">${o.order_no||'manual'}</td>
@@ -454,7 +454,7 @@ const Penjualan = {
               <td class="font-mono text-xs">${o.sku||'-'}</td>
               <td class="text-center font-semibold">${o.qty||1}</td>
               <td class="text-xs text-gray-500 max-w-[200px] truncate" title="${o.cancel_reason||''}">${o.cancel_reason||'-'}</td>
-              ${App.isOwner() ? `<td>${this._reviewActions(o)}</td>` : ''}
+              ${(App.isOwner() || App.isAdmin()) ? `<td>${this._reviewActions(o)}</td>` : ''}
             </tr>`).join('')}
             </tbody>
           </table>
@@ -579,7 +579,7 @@ const Penjualan = {
   },
 
   async confirmReview(id, action) {
-    if (!App.isOwner()) { App.toast('Hanya Owner yang dapat konfirmasi.', 'warning'); return; }
+    if (!App.isOwner() && !App.isAdmin()) { App.toast('Hanya Owner/Admin yang dapat konfirmasi.', 'warning'); return; }
 
     const order = this._orders.find(o => o.id === id);
     if (!order) return;
@@ -609,7 +609,7 @@ const Penjualan = {
     const updatePayload = { stok_action: newAction };
     if (action === 'kompensasi_selesai') {
       updatePayload.notes = (order.notes ? order.notes + ' | ' : '') +
-        `Kompensasi dicatat pada ${App.todayISO()} oleh Owner`;
+        `Kompensasi dicatat pada ${App.todayISO()} oleh ${App.isOwner() ? 'Owner' : 'Admin'}`;
     }
 
     const { error } = await App.db().from('orders').update(updatePayload).eq('id', id);
