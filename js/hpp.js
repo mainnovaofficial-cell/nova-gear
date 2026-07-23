@@ -253,6 +253,7 @@ const HPP = {
   },
 
   _rowHtml(id) {
+    const source = document.getElementById('h-source')?.value || 'china';
     return `
     <div class="border rounded-lg p-3 mb-3 bg-gray-50" data-row-id="${id}">
       <div class="flex justify-between items-center mb-2">
@@ -263,9 +264,28 @@ const HPP = {
         <div><label class="label">SKU</label><input id="h-sku-${id}" class="input" placeholder="Kode SKU" oninput="HPP._onSkuInput(${id})"/></div>
         <div><label class="label">Nama Produk *</label><input id="h-name-${id}" class="input" placeholder="Nama produk"/></div>
         <div><label class="label">QTY *</label><input id="h-qty-${id}" type="number" min="1" value="1" class="input" oninput="HPP._calcRow(${id})"/></div>
+        <div><label class="label">Mode Input Harga</label>
+          <select id="h-mode-${id}" class="input" onchange="HPP._onModeChange(${id})">
+            <option value="total">Total (otomatis dibagi Qty)</option>
+            <option value="manual">Manual per Unit</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="h-total-box-${id}" class="grid grid-cols-2 gap-3 mt-2">
+        <div id="h-yuan-helper-${id}" class="col-span-2 ${source === 'china' ? '' : 'hidden'}">
+          <label class="label text-gray-400">Bantuan Konversi (opsional): Total Harga Barang (¥ Yuan)</label>
+          <input id="h-totalyuan-${id}" type="number" step="0.01" class="input" placeholder="Isi di sini untuk auto-isi Rupiah di bawah" oninput="HPP._onYuanHelper(${id})"/>
+        </div>
+        <div><label class="label">Total Harga Barang (Rp) *</label><input id="h-totalharga-${id}" type="number" step="0.01" class="input" placeholder="0" oninput="HPP._calcRow(${id})"/></div>
+        <div><label class="label">Total Ongkir (Rp)</label><input id="h-totalongkir-${id}" type="number" step="0.01" class="input" placeholder="0" oninput="HPP._calcRow(${id})"/></div>
+      </div>
+
+      <div id="h-manual-box-${id}" class="hidden grid grid-cols-2 gap-3 mt-2">
         <div><label class="label"><span id="h-price-label-${id}">Harga per Unit</span></label><input id="h-price-${id}" type="number" step="0.01" class="input" placeholder="0" oninput="HPP._calcRow(${id})"/></div>
         <div><label class="label"><span id="h-ship-label-${id}">Ongkir per Unit</span></label><input id="h-ship-${id}" type="number" step="0.01" class="input" placeholder="0" oninput="HPP._calcRow(${id})"/></div>
       </div>
+
       <div class="mt-3">
         <label class="inline-flex items-center gap-2 text-xs text-gray-600">
           <input type="checkbox" id="h-freebie-toggle-${id}" onchange="HPP._toggleFreebie(${id})"/> Tambah Freebie
@@ -283,7 +303,10 @@ const HPP = {
         </div>
       </div>
       <div class="flex justify-between items-center mt-3 bg-blue-50 rounded-lg px-3 py-2">
-        <span class="text-xs text-blue-600">HPP per Unit</span>
+        <div>
+          <span class="text-xs text-blue-600">HPP per Unit</span>
+          <p id="h-preview-detail-${id}" class="text-[11px] text-gray-400"></p>
+        </div>
         <span id="h-preview-${id}" class="text-sm font-bold text-blue-700 text-money">Rp 0</span>
       </div>
     </div>`;
@@ -332,28 +355,70 @@ const HPP = {
     this._recalcAll();
   },
 
+  _onModeChange(id) {
+    const mode = document.getElementById(`h-mode-${id}`)?.value || 'total';
+    document.getElementById(`h-total-box-${id}`)?.classList.toggle('hidden', mode !== 'total');
+    document.getElementById(`h-manual-box-${id}`)?.classList.toggle('hidden', mode !== 'manual');
+    this._calcRow(id);
+  },
+
+  // Bantuan konversi: user isi Total Harga Barang dalam Yuan, otomatis dikonversi
+  // ke Rupiah (memakai Kurs batch) dan mengisi field "Total Harga Barang (Rp)" —
+  // field itu tetap yang jadi sumber kebenaran/tersimpan, Yuan cuma alat bantu isi.
+  _onYuanHelper(id) {
+    const rate  = +document.getElementById('h-rate')?.value || 0;
+    const yuan  = +document.getElementById(`h-totalyuan-${id}`)?.value || 0;
+    const totalHargaInput = document.getElementById(`h-totalharga-${id}`);
+    if (totalHargaInput) totalHargaInput.value = yuan ? Math.round(yuan * rate) : '';
+    this._calcRow(id);
+  },
+
   _recalcAll() {
-    this._rowIds.forEach(id => this._calcRow(id));
+    this._rowIds.forEach(id => {
+      // Kalau baris ini pakai bantuan konversi Yuan, sinkronkan ulang ke Kurs terbaru
+      // (mis. Kurs baru diubah setelah Yuan sudah diisi) sebelum recompute preview.
+      const yuanEl = document.getElementById(`h-totalyuan-${id}`);
+      if (yuanEl && yuanEl.value) this._onYuanHelper(id);
+      else this._calcRow(id);
+    });
     this._updateKursVisibility();
   },
 
-  _computeRow({ source, rate, qty, price, ship, freebieOn, freebieSource, freebiePrice }) {
-    const base = source === 'china' ? (price * rate) + ship : (price + ship);
+  // mode 'total'  → pricePerUnit/shipPerUnit dihitung dari Total Harga Barang/Ongkir ÷ Qty
+  //                 baris ini sendiri (bukan dibagi rata ke baris lain — tiap SKU independen).
+  // mode 'manual' → persis logika lama: user isi harga & ongkir per unit langsung.
+  // Kedua mode disimpan final dalam Rupiah (price_unit/shipping_unit).
+  _computeRow({ mode, source, rate, qty, price, ship, totalHarga, totalOngkir, freebieOn, freebieSource, freebiePrice }) {
+    let pricePerUnit, shipPerUnit;
+    if (mode === 'manual') {
+      pricePerUnit = source === 'china' ? price * rate : price;
+      shipPerUnit  = ship;
+    } else {
+      pricePerUnit = qty > 0 ? totalHarga  / qty : 0;
+      shipPerUnit  = qty > 0 ? totalOngkir / qty : 0;
+    }
     let freebieCost = 0;
     if (freebieOn) {
       freebieCost = freebieSource === 'china' ? freebiePrice * rate : freebiePrice;
     }
-    const perUnit = base + freebieCost;
+    const perUnit = pricePerUnit + shipPerUnit + freebieCost;
     const total = perUnit * qty;
-    return { perUnit, total };
+    return { pricePerUnit, shipPerUnit, perUnit, total };
   },
 
   _calcRow(id) {
     const source = document.getElementById('h-source')?.value || 'china';
     const rate   = +document.getElementById('h-rate')?.value || 0;
-    const qty    = +document.getElementById(`h-qty-${id}`)?.value   || 0;
-    const price  = +document.getElementById(`h-price-${id}`)?.value || 0;
-    const ship   = +document.getElementById(`h-ship-${id}`)?.value  || 0;
+    const qty    = +document.getElementById(`h-qty-${id}`)?.value || 0;
+    const mode   = document.getElementById(`h-mode-${id}`)?.value || 'total';
+
+    const yuanHelper = document.getElementById(`h-yuan-helper-${id}`);
+    if (yuanHelper) yuanHelper.classList.toggle('hidden', source !== 'china');
+
+    const price       = +document.getElementById(`h-price-${id}`)?.value       || 0;
+    const ship        = +document.getElementById(`h-ship-${id}`)?.value        || 0;
+    const totalHarga  = +document.getElementById(`h-totalharga-${id}`)?.value  || 0;
+    const totalOngkir = +document.getElementById(`h-totalongkir-${id}`)?.value || 0;
 
     const priceLabel = document.getElementById(`h-price-label-${id}`);
     const shipLabel   = document.getElementById(`h-ship-label-${id}`);
@@ -366,9 +431,15 @@ const HPP = {
     const freebieLabel  = document.getElementById(`h-freebie-price-label-${id}`);
     if (freebieLabel) freebieLabel.textContent = `Harga Freebie per Unit (${freebieSource === 'china' ? '¥' : 'Rp'})`;
 
-    const { perUnit } = this._computeRow({ source, rate, qty, price, ship, freebieOn, freebieSource, freebiePrice });
+    const { pricePerUnit, shipPerUnit, perUnit } = this._computeRow({ mode, source, rate, qty, price, ship, totalHarga, totalOngkir, freebieOn, freebieSource, freebiePrice });
     const preview = document.getElementById(`h-preview-${id}`);
     if (preview) preview.textContent = App.formatRupiah(perUnit);
+    const detail = document.getElementById(`h-preview-detail-${id}`);
+    if (detail) {
+      detail.textContent = mode === 'total'
+        ? `Harga/Unit ${App.formatRupiah(pricePerUnit)} + Ongkir/Unit ${App.formatRupiah(shipPerUnit)}`
+        : '';
+    }
 
     this._updateKursVisibility();
   },
@@ -396,23 +467,29 @@ const HPP = {
 
     const items = [];
     for (const id of this._rowIds) {
-      const name  = document.getElementById(`h-name-${id}`).value.trim();
-      const qty   = +document.getElementById(`h-qty-${id}`).value   || 0;
-      const price = +document.getElementById(`h-price-${id}`).value || 0;
-      if (!name || !qty || !price) continue;
+      const name = document.getElementById(`h-name-${id}`).value.trim();
+      const qty  = +document.getElementById(`h-qty-${id}`).value || 0;
+      const mode = document.getElementById(`h-mode-${id}`).value || 'total';
+
+      const price       = +document.getElementById(`h-price-${id}`).value       || 0;
+      const ship        = +document.getElementById(`h-ship-${id}`).value        || 0;
+      const totalHarga  = +document.getElementById(`h-totalharga-${id}`).value  || 0;
+      const totalOngkir = +document.getElementById(`h-totalongkir-${id}`).value || 0;
+
+      const hasHarga = mode === 'manual' ? !!price : !!totalHarga;
+      if (!name || !qty || !hasHarga) continue;
 
       const sku   = document.getElementById(`h-sku-${id}`).value.trim() || null;
-      const ship  = +document.getElementById(`h-ship-${id}`).value || 0;
       const freebieOn = !!document.getElementById(`h-freebie-toggle-${id}`).checked;
       const freebieName   = freebieOn ? (document.getElementById(`h-freebie-name-${id}`).value.trim() || null) : null;
       const freebieSource = freebieOn ? document.getElementById(`h-freebie-source-${id}`).value : null;
       const freebiePrice  = freebieOn ? (+document.getElementById(`h-freebie-price-${id}`).value || 0) : 0;
 
-      const { perUnit, total } = this._computeRow({ source, rate, qty, price, ship, freebieOn, freebieSource, freebiePrice });
+      const { pricePerUnit, shipPerUnit, perUnit, total } = this._computeRow({ mode, source, rate, qty, price, ship, totalHarga, totalOngkir, freebieOn, freebieSource, freebiePrice });
 
       items.push({
         sku, product_name: name, qty,
-        price_unit: price, shipping_unit: ship,
+        price_unit: pricePerUnit, shipping_unit: shipPerUnit,
         freebie_name: freebieName, freebie_source: freebieSource,
         freebie_price_unit: freebiePrice,
         cost_per_unit: perUnit, total_cost: total,
