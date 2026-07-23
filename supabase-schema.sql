@@ -635,6 +635,30 @@ select 'modal_awal_shopee', coalesce((select value from settings where key = 'mo
 where not exists (select 1 from settings where key = 'modal_awal_shopee');
 
 -- ═══════════════════════════════════════════════════════
+--  MIGRASI v14 — Uang Muka Pembelian (DP ke supplier China,
+--  dibayar sebelum HPP diinput)
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- Uang muka dianggap mengurangi Saldo BCA SAAT DIBAYAR (persis seperti
+-- Operasional), sebelum barang & HPP-nya diinput. Saat HPP batch terkait
+-- akhirnya diinput, uang muka ini bisa di-link (terpakai=true, hpp_batch_id
+-- terisi) supaya batch tsb tidak mengurangi Saldo BCA dua kali — lihat
+-- js/dashboard.js untuk formula Saldo BCA lengkap.
+create table if not exists uang_muka_pembelian (
+  id            uuid primary key default gen_random_uuid(),
+  tanggal       date not null,
+  deskripsi     text,
+  jumlah        numeric(14,2) default 0,
+  terpakai      boolean default false,
+  hpp_batch_id  uuid references hpp_batches(id) on delete set null,
+  created_at    timestamptz default now()
+);
+
+create index if not exists uang_muka_pembelian_tanggal_idx  on uang_muka_pembelian(tanggal);
+create index if not exists uang_muka_pembelian_terpakai_idx on uang_muka_pembelian(terpakai);
+
+-- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup
 --  Untuk production, gunakan Supabase Auth + RLS policies.
 --  Untuk sementara (anon key): disable RLS di table settings.
@@ -653,6 +677,7 @@ where not exists (select 1 from settings where key = 'modal_awal_shopee');
 -- alter table hutang      enable row level security;
 -- alter table hutang_pembayaran enable row level security;
 -- alter table penarikan_saldo enable row level security;
+-- alter table uang_muka_pembelian enable row level security;
 
 -- Policy allow all untuk anon (development — ganti untuk production)
 -- create policy "allow_all" on orders      for all using (true) with check (true);
@@ -667,3 +692,4 @@ where not exists (select 1 from settings where key = 'modal_awal_shopee');
 -- create policy "allow_all" on hutang      for all using (true) with check (true);
 -- create policy "allow_all" on hutang_pembayaran for all using (true) with check (true);
 -- create policy "allow_all" on penarikan_saldo for all using (true) with check (true);
+-- create policy "allow_all" on uang_muka_pembelian for all using (true) with check (true);

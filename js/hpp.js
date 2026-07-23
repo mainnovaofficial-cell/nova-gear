@@ -2,6 +2,8 @@
    Nova Gear — HPP Module
    Pembelian stok per batch: sumber China (Yuan) / Indonesia (Rupiah),
    tiap batch bisa berisi beberapa produk + freebie opsional
+   + Tab Uang Muka Pembelian: DP yang dibayar duluan (potong Saldo BCA
+   saat dibayar), bisa di-link ke batch HPP saat barangnya diinput
 ═══════════════════════════════════════════════════════ */
 'use strict';
 
@@ -9,41 +11,104 @@ const HPP = {
   _data: [],
   _rowIds: [],
   _rowSeq: 0,
+  _tab: 'pembelian',
+  _umData: [],
+  _selectedUM: new Set(),
 
   async onLoad() {
     const el = document.getElementById('page-hpp');
-    el.innerHTML = `
-    <div class="page-header">
-      <div><h2>HPP — Harga Pokok Pembelian</h2><p>Catat pembelian stok per batch dari supplier (China/Indonesia)</p></div>
-      <div class="flex gap-2">
-        <button onclick="HPP.openAdd()" class="btn-primary text-xs">
-          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-          Tambah Pembelian
-        </button>
-      </div>
-    </div>
-    <!-- Summary cards -->
-    <div id="hpp-summary" class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5"></div>
-    <!-- Table -->
-    <div class="card">
-      <div class="card-header mb-3">
-        <span class="card-title">Riwayat Pembelian</span>
-        <button onclick="HPP._exportCSV()" class="btn-secondary text-xs !py-1">Export CSV</button>
-      </div>
-      <div id="hpp-table"></div>
-    </div>`;
+    el.innerHTML = this._shell();
     await this._load();
   },
 
+  _shell() {
+    return `
+    <div class="page-header">
+      <div><h2>HPP — Harga Pokok Pembelian</h2><p>Catat pembelian stok per batch dari supplier (China/Indonesia), dan Uang Muka yang dibayar duluan</p></div>
+      <div class="flex gap-2">
+        <button id="hpp-btn-add-pembelian" onclick="HPP.openAdd()" class="btn-primary text-xs">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+          Tambah Pembelian
+        </button>
+        <button id="hpp-btn-add-um" onclick="HPP.openAddUM()" class="btn-primary text-xs hidden">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+          Tambah Uang Muka
+        </button>
+      </div>
+    </div>
+    <div id="hpp-um-banner"></div>
+    <div class="tabs">
+      <button class="tab-btn active" onclick="HPP._switchTab('pembelian', this)">Pembelian</button>
+      <button class="tab-btn" onclick="HPP._switchTab('umuka', this)">Uang Muka</button>
+    </div>
+    <div id="hpp-tab-content"></div>`;
+  },
+
   async _load() {
-    const { data, error } = await App.db()
-      .from('hpp_batches')
-      .select('*, hpp_items(*)')
-      .order('purchase_date', { ascending: false });
-    if (error) { App.toast('Gagal memuat HPP: ' + error.message, 'error'); return; }
-    this._data = data || [];
-    this._renderSummary();
-    this._renderTable();
+    const [hppRes, umRes] = await Promise.all([
+      App.db().from('hpp_batches').select('*, hpp_items(*)').order('purchase_date', { ascending: false }),
+      App.db().from('uang_muka_pembelian').select('*, hpp_batches(batch_no, purchase_date)').order('tanggal', { ascending: false }),
+    ]);
+    if (hppRes.error) { App.toast('Gagal memuat HPP: ' + hppRes.error.message, 'error'); return; }
+    if (umRes.error)  { App.toast('Gagal memuat Uang Muka: ' + umRes.error.message, 'error'); return; }
+    this._data   = hppRes.data || [];
+    this._umData = umRes.data || [];
+    this._renderBanner();
+    this._renderTab();
+  },
+
+  _switchTab(tab, btn) {
+    this._tab = tab;
+    document.querySelectorAll('#page-hpp .tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('hpp-btn-add-pembelian').classList.toggle('hidden', tab !== 'pembelian');
+    document.getElementById('hpp-btn-add-um').classList.toggle('hidden', tab !== 'umuka');
+    this._renderTab();
+  },
+
+  _renderTab() {
+    const el = document.getElementById('hpp-tab-content');
+    if (this._tab === 'pembelian') {
+      el.innerHTML = `
+      <div id="hpp-summary" class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5"></div>
+      <div class="card">
+        <div class="card-header mb-3">
+          <span class="card-title">Riwayat Pembelian</span>
+          <button onclick="HPP._exportCSV()" class="btn-secondary text-xs !py-1">Export CSV</button>
+        </div>
+        <div id="hpp-table"></div>
+      </div>`;
+      this._renderSummary();
+      this._renderTable();
+    } else {
+      el.innerHTML = `
+      <div id="hpp-um-summary" class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5"></div>
+      <div class="card">
+        <div class="card-header mb-3">
+          <span class="card-title">Riwayat Uang Muka Pembelian</span>
+          <button onclick="HPP._exportUMCSV()" class="btn-secondary text-xs !py-1">Export CSV</button>
+        </div>
+        <div id="hpp-um-table"></div>
+      </div>`;
+      this._renderUMSummary();
+      this._renderUMTable();
+    }
+  },
+
+  _renderBanner() {
+    const el = document.getElementById('hpp-um-banner');
+    if (!el) return;
+    const unused = this._umData.filter(u => !u.terpakai);
+    if (!unused.length) { el.innerHTML = ''; return; }
+    const total = unused.reduce((s, r) => s + (+r.jumlah || 0), 0);
+    el.innerHTML = `
+    <div class="card !py-3 !px-4 mb-4 border-l-4 border-indigo-400 bg-indigo-50/50 flex items-center justify-between flex-wrap gap-2">
+      <div>
+        <p class="text-xs font-semibold text-indigo-700 uppercase tracking-wide">Uang Muka Belum Terpakai</p>
+        <p class="text-xs text-gray-500 mt-0.5">${unused.length} entri menggantung — belum di-link ke pembelian manapun</p>
+      </div>
+      <p class="text-lg font-bold text-indigo-700 text-money">${App.formatRupiah(total)}</p>
+    </div>`;
   },
 
   _renderSummary() {
@@ -118,6 +183,7 @@ const HPP = {
     const settings = AppState.settings || {};
     this._rowIds = [];
     this._rowSeq = 0;
+    this._selectedUM = new Set();
     App.openModal({
       title: 'Tambah Pembelian Stok (Batch)',
       size: 'max-w-3xl',
@@ -141,12 +207,49 @@ const HPP = {
         <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Daftar Produk</span>
         <button type="button" onclick="HPP._addRow()" class="btn-secondary text-xs !py-1">+ Tambah Produk</button>
       </div>
-      <div id="h-items"></div>`,
+      <div id="h-items"></div>
+      <div class="mt-4 pt-4 border-t border-gray-100">
+        <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Gunakan Uang Muka (opsional)</span>
+        <p class="text-xs text-gray-400 mt-0.5 mb-2">Pilih Uang Muka yang sudah dibayar untuk barang ini — otomatis di-link ke batch ini dan tidak akan memotong Saldo BCA lagi (hanya sisanya, mis. ongkir, yang kepotong normal).</p>
+        <div id="h-um-section"></div>
+      </div>`,
       footer: `<button onclick="App.closeModal()" class="btn-secondary">Batal</button>
                <button onclick="HPP.save()" class="btn-primary">Simpan Batch</button>`,
     });
     this._addRow();
     this._updateKursVisibility();
+    this._renderUMPicker();
+  },
+
+  _renderUMPicker() {
+    const el = document.getElementById('h-um-section');
+    if (!el) return;
+    const unused = this._umData.filter(u => !u.terpakai);
+    if (!unused.length) {
+      el.innerHTML = `<p class="text-xs text-gray-400">Tidak ada uang muka yang belum terpakai.</p>`;
+      return;
+    }
+    el.innerHTML = `
+      <div class="space-y-1.5 max-h-40 overflow-y-auto border rounded-lg p-2">
+        ${unused.map(u => `
+          <label class="flex items-center justify-between gap-2 text-xs py-1 px-1.5 rounded hover:bg-gray-50 cursor-pointer">
+            <span class="flex items-center gap-2 min-w-0">
+              <input type="checkbox" class="h-um-check" data-id="${u.id}" data-jumlah="${u.jumlah}" onchange="HPP._onUMToggle()"/>
+              <span class="truncate">${App.formatDate(u.tanggal)} — ${u.deskripsi||'-'}</span>
+            </span>
+            <span class="font-semibold text-money whitespace-nowrap">${App.formatRupiah(u.jumlah)}</span>
+          </label>`).join('')}
+      </div>
+      <p id="h-um-total" class="text-xs text-indigo-600 font-medium mt-1.5"></p>`;
+    this._onUMToggle();
+  },
+
+  _onUMToggle() {
+    const checks = Array.from(document.querySelectorAll('.h-um-check:checked'));
+    this._selectedUM = new Set(checks.map(c => c.dataset.id));
+    const total = checks.reduce((s,c) => s + (+c.dataset.jumlah || 0), 0);
+    const label = document.getElementById('h-um-total');
+    if (label) label.textContent = total > 0 ? `Total Uang Muka dipakai: ${App.formatRupiah(total)}` : '';
   },
 
   _rowHtml(id) {
@@ -342,20 +445,39 @@ const HPP = {
       await App.db().from('stok_awal').upsert(newSkuRows, { onConflict: 'sku', ignoreDuplicates: true });
     }
 
+    // Link Uang Muka yang dipilih ke batch ini — supaya nilainya tidak dipotong lagi
+    // dari Saldo BCA (sudah dipotong saat Uang Muka dibayar). Lihat js/dashboard.js.
+    let umWarning = '';
+    if (this._selectedUM.size) {
+      const selectedIds = Array.from(this._selectedUM);
+      const umTotal = this._umData
+        .filter(u => selectedIds.includes(u.id))
+        .reduce((s, u) => s + (+u.jumlah || 0), 0);
+      const batchTotalCost = items.reduce((s, it) => s + it.total_cost, 0);
+      if (umTotal > batchTotalCost) {
+        umWarning = ` Peringatan: Uang Muka terpilih (${App.formatRupiah(umTotal)}) melebihi Total HPP batch ini (${App.formatRupiah(batchTotalCost)}).`;
+      }
+      const { error: umErr } = await App.db()
+        .from('uang_muka_pembelian')
+        .update({ terpakai: true, hpp_batch_id: batch.id })
+        .in('id', selectedIds);
+      if (umErr) { App.toast('Batch tersimpan, tapi gagal link Uang Muka: ' + umErr.message, 'error'); }
+    }
+
     App.closeModal();
-    App.toast('Pembelian disimpan!', 'success');
+    App.toast('Pembelian disimpan!' + umWarning, umWarning ? 'warning' : 'success');
     await this._load();
   },
 
   async delete(batchId) {
     const ok = await App.confirm('Hapus batch pembelian ini beserta semua produknya?');
     if (!ok) return;
+    // Lepas tautan Uang Muka yang terpakai di batch ini, supaya bisa dipakai lagi untuk pembelian lain.
+    await App.db().from('uang_muka_pembelian').update({ terpakai: false, hpp_batch_id: null }).eq('hpp_batch_id', batchId);
     const { error } = await App.db().from('hpp_batches').delete().eq('id', batchId);
     if (error) { App.toast('Gagal hapus: ' + error.message, 'error'); return; }
     App.toast('Data dihapus.', 'success');
-    this._data = this._data.filter(b => b.id !== batchId);
-    this._renderSummary();
-    this._renderTable();
+    await this._load();
   },
 
   _exportCSV() {
@@ -374,5 +496,110 @@ const HPP = {
       });
     });
     App.exportCSV(rows, 'hpp-export.csv');
+  },
+
+  /* ══════════════════════════════════════════════
+     Tab: Uang Muka Pembelian
+  ══════════════════════════════════════════════ */
+
+  _renderUMSummary() {
+    const d = this._umData;
+    const total  = d.reduce((s, r) => s + (+r.jumlah || 0), 0);
+    const unused = d.filter(r => !r.terpakai);
+    const used   = d.filter(r => r.terpakai);
+    const cards = [
+      ['Total Uang Muka', App.formatRupiah(total), `${d.length} entri`],
+      ['Belum Terpakai', App.formatRupiah(unused.reduce((s,r)=>s+(+r.jumlah||0),0)), `${unused.length} entri`],
+      ['Sudah Terpakai', App.formatRupiah(used.reduce((s,r)=>s+(+r.jumlah||0),0)), `${used.length} entri`],
+    ];
+    document.getElementById('hpp-um-summary').innerHTML = cards.map(([t,v,s]) => `
+      <div class="stat-card"><p class="stat-label">${t}</p><p class="stat-value text-money">${v}</p><p class="stat-sub">${s}</p></div>`).join('');
+  },
+
+  _renderUMTable() {
+    const el = document.getElementById('hpp-um-table');
+    if (!this._umData.length) {
+      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg><p>Belum ada data uang muka</p></div>`;
+      return;
+    }
+    const rows = this._umData.map(r => {
+      const batch = r.hpp_batches;
+      const batchLabel = batch ? (batch.batch_no || App.formatDate(batch.purchase_date)) : '-';
+      const actionBtn = r.terpakai
+        ? `<button onclick="HPP._unlinkUM('${r.id}')" class="text-gray-300 hover:text-amber-500 transition-colors" title="Lepas Tautan dari Batch">
+             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 01-5.656-5.656l1.5-1.5M10.172 13.828a4 4 0 010-5.656l3-3a4 4 0 015.656 5.656l-1.5 1.5"/></svg>
+           </button>`
+        : `<button onclick="HPP._deleteUM('${r.id}')" class="text-gray-300 hover:text-red-500 transition-colors" title="Hapus">
+             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+           </button>`;
+      return `<tr>
+        <td class="whitespace-nowrap">${App.formatDate(r.tanggal)}</td>
+        <td class="max-w-[220px] truncate" title="${r.deskripsi||''}">${r.deskripsi||'-'}</td>
+        <td class="text-right font-semibold text-money">${App.formatRupiah(r.jumlah)}</td>
+        <td>${r.terpakai ? `<span class="badge badge-green">Terpakai</span>` : `<span class="badge badge-yellow">Belum Terpakai</span>`}</td>
+        <td class="text-xs text-gray-500">${batchLabel}</td>
+        <td>${actionBtn}</td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = `
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead><tr><th>Tanggal</th><th>Deskripsi</th><th class="text-right">Jumlah</th><th>Status</th><th>Batch Terkait</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  },
+
+  openAddUM() {
+    App.openModal({
+      title: 'Tambah Uang Muka Pembelian',
+      body: `
+      <div class="space-y-4">
+        <div><label class="label">Tanggal Bayar *</label><input id="um-date" type="date" class="input" value="${App.todayISO()}"/></div>
+        <div><label class="label">Deskripsi / Nama Barang *</label><input id="um-desc" class="input" placeholder="Mis. DP Batch Sarung Tangan Motor Maret"/></div>
+        <div><label class="label">Jumlah Dibayar (Rp) *</label><input id="um-jumlah" type="number" class="input" placeholder="0"/></div>
+      </div>
+      <p class="text-xs text-gray-400 mt-3">Jumlah ini langsung mengurangi Saldo BCA saat disimpan, seperti pengeluaran Operasional. Nanti saat barang sampai dan HPP-nya diinput, Uang Muka ini bisa dipilih di form Tambah Pembelian supaya tidak kepotong Saldo BCA dua kali.</p>`,
+      footer: `<button onclick="App.closeModal()" class="btn-secondary">Batal</button>
+               <button onclick="HPP.saveUM()" class="btn-primary">Simpan</button>`,
+    });
+  },
+
+  async saveUM() {
+    const tanggal = document.getElementById('um-date').value;
+    const desc    = document.getElementById('um-desc').value.trim();
+    const jumlah  = +document.getElementById('um-jumlah').value || 0;
+    if (!tanggal || !desc || !jumlah) { App.toast('Tanggal, deskripsi, dan jumlah wajib diisi.', 'warning'); return; }
+    const { error } = await App.db().from('uang_muka_pembelian').insert({ tanggal, deskripsi: desc, jumlah, terpakai: false });
+    if (error) { App.toast('Error: ' + error.message, 'error'); return; }
+    App.closeModal();
+    App.toast('Uang Muka disimpan!', 'success');
+    await this._load();
+  },
+
+  async _deleteUM(id) {
+    const ok = await App.confirm('Hapus uang muka ini? Saldo BCA akan bertambah kembali sebesar nilai ini.');
+    if (!ok) return;
+    const { error } = await App.db().from('uang_muka_pembelian').delete().eq('id', id);
+    if (error) { App.toast('Gagal hapus: ' + error.message, 'error'); return; }
+    App.toast('Data dihapus.', 'success');
+    await this._load();
+  },
+
+  async _unlinkUM(id) {
+    const ok = await App.confirm('Lepas tautan Uang Muka ini dari batch pembelian? Statusnya kembali jadi "Belum Terpakai" dan bisa dipakai untuk pembelian lain.');
+    if (!ok) return;
+    const { error } = await App.db().from('uang_muka_pembelian').update({ terpakai: false, hpp_batch_id: null }).eq('id', id);
+    if (error) { App.toast('Gagal lepas tautan: ' + error.message, 'error'); return; }
+    App.toast('Tautan dilepas.', 'success');
+    await this._load();
+  },
+
+  _exportUMCSV() {
+    App.exportCSV(this._umData.map(r => ({
+      tanggal: r.tanggal, deskripsi: r.deskripsi, jumlah: r.jumlah,
+      status: r.terpakai ? 'Terpakai' : 'Belum Terpakai',
+      batch_terkait: r.hpp_batches ? (r.hpp_batches.batch_no || r.hpp_batches.purchase_date || '') : '',
+    })), 'uang-muka-export.csv');
   },
 };

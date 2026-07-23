@@ -51,6 +51,7 @@ const Dashboard = {
         { data: kasPribadi, error: e8 },
         { data: hutangBayar, error: e9 },
         { data: penarikanSaldo, error: e10 },
+        { data: uangMuka, error: e11 },
       ] = await Promise.all([
         db.from('orders').select('order_no,status,created_at,order_date,qty,sku,source,selling_price'),
         db.from('hpp_items').select('sku,cost_per_unit,total_cost,created_at').order('created_at', { ascending: false }),
@@ -62,8 +63,9 @@ const Dashboard = {
         db.from('kas_pribadi').select('tipe,jumlah'),
         db.from('hutang_pembayaran').select('sumber_kas_bisnis'),
         db.from('penarikan_saldo').select('jumlah'),
+        db.from('uang_muka_pembelian').select('jumlah,terpakai'),
       ]);
-      if (e1 || e2 || e3 || e4 || e5 || e6 || e7 || e8 || e9 || e10) throw new Error((e1||e2||e3||e4||e5||e6||e7||e8||e9||e10).message);
+      if (e1 || e2 || e3 || e4 || e5 || e6 || e7 || e8 || e9 || e10 || e11) throw new Error((e1||e2||e3||e4||e5||e6||e7||e8||e9||e10||e11).message);
 
       const settings  = await App.getSettings();
       const modalAwalBca    = parseFloat(settings.modal_awal_bca || 0);
@@ -120,8 +122,17 @@ const Dashboard = {
       // cuma dipakai untuk laporan performa (ACOS, konversi, dll), bukan kalkulasi kas.
       // Saat tagihan Kartu Kredit untuk Iklan dibayar (via Saldo BCA), itu dicatat manual
       // sebagai Operasional oleh Owner — baru masuk ke totalOpAllTime di bawah.
+      //
+      // Uang Muka Pembelian (DP ke supplier, dibayar sebelum barang+HPP-nya diinput):
+      // uang keluar dari Saldo BCA SAAT DIBAYAR, terlepas nanti dipakai atau belum.
+      // Begitu Uang Muka di-link ke suatu hpp_batches (terpakai=true), total_cost batch
+      // itu di hpp_items TETAP dihitung penuh (utuh, tidak dikurangi) — supaya HPP/COGS
+      // per unit tidak berubah. Supaya tidak dobel potong Saldo BCA, HANYA Uang Muka yang
+      // BELUM terpakai yang dikurangkan di sini; begitu di-link, potongannya otomatis
+      // "pindah" jadi bagian dari totalPembelianHPPAllTime (yang sudah termasuk porsi DP-nya).
       const totalPembelianHPPAllTime = sum(hppData || [], 'total_cost');
       const totalOpAllTime  = sum(opData  || [], 'cost');
+      const totalUangMukaBelumTerpakai = (uangMuka || []).filter(u => !u.terpakai).reduce((s, u) => s + (+u.jumlah || 0), 0);
       // HANYA dari income_releases (transaksi Shopee) — pesanan Manual/Offline dibayar
       // cash/transfer langsung ke BCA atau kantong pribadi, uangnya tidak pernah masuk
       // ke Saldo Shopee. Net Diterima manual tetap dihitung di KPI "Net Diterima" bulanan
@@ -138,6 +149,7 @@ const Dashboard = {
       const saldoShopee = modalAwalShopee + netRevAllTime - totalPenarikanAllTime;
       const saldoBCA = modalAwalBca + totalPenarikanAllTime
         - totalPembelianHPPAllTime - totalOpAllTime
+        - totalUangMukaBelumTerpakai
         - totalPriveAllTime + totalSetoranAllTime
         - totalBayarHutangKasBisnisAllTime;
       const sisaKas = saldoShopee + saldoBCA;
@@ -224,7 +236,7 @@ const Dashboard = {
       <!-- Row 1b: Saldo & Penarikan -->
       <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
         ${this._bigCard('Saldo Shopee', App.formatRupiah(saldoShopee), 'Modal Awal + Net Diterima Shopee - Penarikan (all-time, tanpa Manual/Offline)', 'bg-orange-50','text-orange-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
-        ${this._bigCard('Saldo BCA', App.formatRupiah(saldoBCA), 'Modal Awal + Penarikan - HPP/Ops/Prive/Hutang (all-time, tanpa Iklan)', 'bg-indigo-50','text-indigo-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
+        ${this._bigCard('Saldo BCA', App.formatRupiah(saldoBCA), 'Modal Awal + Penarikan - HPP/Ops/Prive/Hutang/UangMuka (all-time, tanpa Iklan)', 'bg-indigo-50','text-indigo-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
         ${this._bigCard('Sisa Kas', App.formatRupiah(sisaKas), 'Saldo Shopee + Saldo BCA (total gabungan)', sisaKas>=0?'bg-sky-50':'bg-red-50', sisaKas>=0?'text-sky-600':'text-red-600','M9 8h6m-5 4h4m1 8H8a2 2 0 01-2-2V6a2 2 0 012-2h4.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V18a2 2 0 01-2 2z')}
       </div>`}
 
