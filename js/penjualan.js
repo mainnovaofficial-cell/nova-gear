@@ -1088,15 +1088,20 @@ const Penjualan = {
         for (const r of rows) {
           const orderNo = this._col(r, 'No. Pesanan', 'No Pesanan', 'Order ID');
           if (!orderNo) continue;
-          const retSt = this._col(r, 'Status Pengembalian Barang', 'Status Pengembalian', 'Return Status');
+          const cancelStatus = this._col(r, 'Status Pembatalan/Pengembalian', 'Status Pengembalian', 'Status') || '';
+          // "Pengembalian Barang/Dana Dibatalkan" → retur DIBATALKAN (oleh pembeli/Shopee):
+          // barang tetap di pembeli, dana cair normal ke penjual. Pesanan ini BUKAN retur
+          // aktif — jangan masuk Perlu Direview, kembalikan ke status Selesai seperti normal.
+          const returDibatalkan = /dibatalkan/i.test(cancelStatus);
           records.push({
             order_no:      orderNo,
             sku:           this._col(r, 'SKU Induk/Kode Variasi', 'SKU Induk', 'Kode Variasi', 'Nomor Referensi SKU', 'No. SKU Produk', 'SKU') || null,
             product_name:  this._col(r, 'Nama Produk', 'Product Name') || null,
-            cancel_reason: this._col(r, 'Status Pembatalan/Pengembalian', 'Status Pengembalian', 'Status') || null,
+            cancel_reason: cancelStatus || null,
             qty:           this._toNum(this._col(r, 'Jumlah Produk Dikembalikan', 'Jumlah Dikembalikan', 'Jumlah', 'Qty')) || 1,
-            status:        'Retur',
-            stok_action:   'menunggu_barang_kembali',
+            status:        returDibatalkan ? 'Selesai' : 'Retur',
+            stok_action:   returDibatalkan ? 'keluar' : 'menunggu_barang_kembali',
+            returDibatalkan,
           });
         }
       }
@@ -1143,7 +1148,7 @@ const Penjualan = {
       const FINAL_STOK_ACTIONS = ['barang_kembali', 'sudah_keluar_tidak_balik'];
 
       // ── Update pesanan ada / Insert pesanan baru ──
-      let nUpdate = 0, nInsert = 0, nBatal = 0, nGagal = 0, nRetur = 0, nReview = 0, nSkipFinal = 0;
+      let nUpdate = 0, nInsert = 0, nBatal = 0, nGagal = 0, nRetur = 0, nReview = 0, nSkipFinal = 0, nReturBatal = 0;
       const today = App.todayISO();
 
       for (const rec of records) {
@@ -1195,9 +1200,10 @@ const Penjualan = {
           nInsert++;
         }
 
-        if (rec.status === 'Batal')           nBatal++;
-        else if (rec.status === 'Gagal Kirim') nGagal++;
-        else if (rec.status === 'Retur')       nRetur++;
+        if (rec.returDibatalkan)               nReturBatal++;
+        else if (rec.status === 'Batal')        nBatal++;
+        else if (rec.status === 'Gagal Kirim')  nGagal++;
+        else if (rec.status === 'Retur')        nRetur++;
         if (rec.stok_action === 'menunggu_barang_kembali') nReview++;
       }
 
@@ -1212,6 +1218,7 @@ const Penjualan = {
           <div class="text-xs text-gray-500 pt-2 border-t border-gray-100 space-y-0.5">
             <p>Diperbarui: <strong>${nUpdate}</strong> pesanan &nbsp;·&nbsp; Ditambah baru: <strong>${nInsert}</strong> pesanan</p>
             ${nReview ? `<p class="text-amber-600 font-medium">${nReview} pesanan masuk tab "Perlu Direview" (barang belum kembali ke gudang).</p>` : ''}
+            ${nReturBatal ? `<p class="text-gray-500">${nReturBatal} retur dibatalkan pembeli — dikembalikan ke status Selesai, tidak masuk Perlu Direview.</p>` : ''}
             ${nSkipFinal ? `<p class="text-blue-600 font-medium">${nSkipFinal} pesanan dilewati karena sudah dikonfirmasi final (Barang Kembali/Tidak Kembali) — tidak ditimpa.</p>` : ''}
           </div>
         </div>`;
