@@ -15,6 +15,10 @@ const PenyesuaianShopee = {
     <div class="page-header">
       <div><h2>Penyesuaian Shopee</h2><p>Catatan transaksi Penyesuaian dari laporan Saldo Shopee</p></div>
       <div class="flex gap-2">
+        <button onclick="PenyesuaianShopee.openImport()" class="btn-secondary text-xs">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          Import Penyesuaian
+        </button>
         <button onclick="PenyesuaianShopee.openAdd()" class="btn-primary text-xs">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           Tambah Penyesuaian
@@ -120,6 +124,194 @@ const PenyesuaianShopee = {
     App.closeModal();
     App.toast('Penyesuaian Shopee disimpan!', 'success');
     await this._load();
+  },
+
+  /* ═══════════════════════════════════════════════
+     IMPORT PENYESUAIAN — dari my_balance_transaction_report Shopee
+  ═══════════════════════════════════════════════ */
+  openImport() {
+    App.openModal({
+      title: 'Import Penyesuaian Shopee',
+      size: 'max-w-xl',
+      body: `
+        <p class="text-sm text-gray-600 mb-3">Upload file <strong>.xlsx</strong> laporan Saldo Shopee
+        (<span class="font-mono text-xs">my_balance_transaction_report...</span>) dari Seller Centre.
+        Hanya baris dengan Tipe Transaksi <strong>"Penyesuaian"</strong> yang akan diambil — baris lain
+        (Penghasilan dari Pesanan, Penarikan Dana, dll) dilewati. Baris yang tanggal + deskripsi +
+        jumlahnya sudah pernah diimport tidak akan digandakan.</p>
+        <div class="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer
+                    hover:border-blue-300 hover:bg-blue-50/30 transition-colors"
+             onclick="document.getElementById('pys-imp-file').click()">
+          <svg class="w-10 h-10 text-gray-300 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+          </svg>
+          <p class="text-sm text-gray-500">Klik atau seret file .xlsx ke sini</p>
+          <input id="pys-imp-file" type="file" accept=".xlsx,.xls" class="hidden"
+                 onchange="PenyesuaianShopee.importFile(this.files[0])"/>
+        </div>
+        <div id="pys-imp-progress" class="hidden mt-4 text-sm text-blue-600 text-center font-medium"></div>
+        <div id="pys-imp-result"   class="hidden mt-3 p-3 rounded-lg text-sm"></div>`,
+    });
+  },
+
+  async importFile(file) {
+    if (!file) return;
+    const prog = document.getElementById('pys-imp-progress');
+    const res  = document.getElementById('pys-imp-result');
+    prog.textContent = 'Membaca file...';
+    prog.classList.remove('hidden');
+    res.classList.add('hidden');
+
+    try {
+      const buf = await file.arrayBuffer();
+      const wb  = XLSX.read(buf, { type: 'array', cellDates: true });
+      const ws  = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+
+      const normHeader = h => String(h || '').replace(/ /g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+      const findColIdx = (headerRow, ...terms) => {
+        for (const term of terms) {
+          const t = normHeader(term);
+          const idx = headerRow.findIndex(h => normHeader(h).includes(t));
+          if (idx !== -1) return idx;
+        }
+        return -1;
+      };
+
+      // Cari baris header tabel (kolom "Tipe Transaksi") secara dinamis — biasanya baris
+      // ke-18 (index 17) karena baris 1-16 berisi info rekening/ringkasan, tapi dicari dulu
+      // supaya tetap jalan kalau jumlah baris header laporan Shopee berubah di masa depan.
+      const HEADER_SEARCH_RANGE = 30;
+      let headerRowIdx = rows.findIndex((row, i) =>
+        i < HEADER_SEARCH_RANGE && Array.isArray(row) && row.some(c => normHeader(c).includes('tipe transaksi')));
+      if (headerRowIdx === -1) headerRowIdx = 17; // fallback: pola default laporan Shopee
+      const headerRow = rows[headerRowIdx] || [];
+
+      const colTanggal   = findColIdx(headerRow, 'tanggal transaksi');
+      const colTipe      = findColIdx(headerRow, 'tipe transaksi');
+      const colDeskripsi = findColIdx(headerRow, 'deskripsi');
+      const colOrderNo   = findColIdx(headerRow, 'no. pesanan', 'no pesanan');
+      const colJumlah    = findColIdx(headerRow, 'jumlah');
+
+      if (colTipe === -1 || colJumlah === -1) {
+        throw new Error('Format file tidak dikenali — kolom "Tipe Transaksi" / "Jumlah" tidak ditemukan.');
+      }
+
+      const records = [];
+      for (let i = headerRowIdx + 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || !row.length) continue;
+        const tipe = String(row[colTipe] || '').trim();
+        if (tipe.toLowerCase() !== 'penyesuaian') continue; // abaikan tipe lain (sudah ditangani menu lain)
+
+        const tanggal = this._toDate(row[colTanggal]);
+        if (!tanggal) continue;
+        const jumlahRaw = this._toNum(row[colJumlah]);
+        if (!jumlahRaw) continue;
+
+        const deskripsi = String(colDeskripsi !== -1 ? row[colDeskripsi] : '').trim() || null;
+        let orderNo = colOrderNo !== -1 ? String(row[colOrderNo] || '').trim() : '';
+        if (!orderNo || orderNo === '-') orderNo = '';
+        if (!orderNo && deskripsi) {
+          // Beberapa baris (mis. biaya premi Gagal Kirim) tidak mengisi kolom No. Pesanan —
+          // no. pesanannya ada di teks Deskripsi, mis. "...Gagal Terkirim: 260629BTQ6Q5AA".
+          const m = deskripsi.match(/:\s*([A-Z0-9]{8,})\s*$/i);
+          if (m) orderNo = m[1];
+        }
+
+        records.push({
+          tanggal,
+          deskripsi,
+          jenis:    jumlahRaw > 0 ? 'masuk' : 'keluar',
+          jumlah:   Math.abs(jumlahRaw),
+          order_no: orderNo || null,
+        });
+      }
+
+      if (!records.length) {
+        res.innerHTML = `<p class="text-orange-700">Tidak ada baris dengan Tipe Transaksi "Penyesuaian" ditemukan di file ini.</p>`;
+        res.className = 'mt-3 p-3 rounded-lg bg-orange-50 border border-orange-100 text-sm';
+        res.classList.remove('hidden');
+        prog.classList.add('hidden');
+        return;
+      }
+
+      // ── Cegah duplikat: cek data existing di rentang tanggal file ini, kunci = tanggal+deskripsi+jumlah ──
+      prog.textContent = 'Mengecek data existing...';
+      const dates  = records.map(r => r.tanggal);
+      const minDate = dates.reduce((m, d) => d < m ? d : m, dates[0]);
+      const maxDate = dates.reduce((m, d) => d > m ? d : m, dates[0]);
+      const { data: existing, error: exErr } = await App.db()
+        .from('penyesuaian_shopee')
+        .select('tanggal,deskripsi,jumlah')
+        .gte('tanggal', minDate)
+        .lte('tanggal', maxDate);
+      if (exErr) throw exErr;
+
+      const dupKey = r => `${r.tanggal}||${(r.deskripsi || '').trim()}||${(+r.jumlah).toFixed(2)}`;
+      const seenKeys = new Set((existing || []).map(dupKey));
+
+      const toInsert = [];
+      let nSkip = 0;
+      for (const rec of records) {
+        const key = dupKey(rec);
+        if (seenKeys.has(key)) { nSkip++; continue; }
+        seenKeys.add(key); // baris duplikat di DALAM file yang sama juga tidak boleh dobel-insert
+        toInsert.push(rec);
+      }
+
+      let nMasuk = 0, nKeluar = 0;
+      if (toInsert.length) {
+        prog.textContent = `Menyimpan ${toInsert.length} data...`;
+        const BATCH = 500;
+        for (let i = 0; i < toInsert.length; i += BATCH) {
+          const batch = toInsert.slice(i, i + BATCH);
+          const { error } = await App.db().from('penyesuaian_shopee').insert(batch);
+          if (error) throw new Error(`Gagal simpan: ${error.message}`);
+        }
+        nMasuk  = toInsert.filter(r => r.jenis === 'masuk').length;
+        nKeluar = toInsert.filter(r => r.jenis === 'keluar').length;
+      }
+
+      res.innerHTML = `
+        <div class="space-y-2">
+          <p class="font-semibold text-green-700">Import selesai!</p>
+          <div class="grid grid-cols-3 gap-2 text-xs text-center">
+            <div class="bg-green-50 border border-green-100 rounded-lg p-2"><p class="font-bold text-xl text-green-600">${nMasuk}</p><p class="text-green-500 mt-0.5">Masuk</p></div>
+            <div class="bg-red-50 border border-red-100 rounded-lg p-2"><p class="font-bold text-xl text-red-600">${nKeluar}</p><p class="text-red-500 mt-0.5">Keluar</p></div>
+            <div class="bg-gray-50 border border-gray-200 rounded-lg p-2"><p class="font-bold text-xl text-gray-600">${nSkip}</p><p class="text-gray-500 mt-0.5">Dilewati (duplikat)</p></div>
+          </div>
+        </div>`;
+      res.className = 'mt-3 p-3 rounded-lg bg-green-50 border border-green-100 text-sm';
+      res.classList.remove('hidden');
+      prog.classList.add('hidden');
+      App.toast(`Import selesai: ${nMasuk} Masuk · ${nKeluar} Keluar · ${nSkip} dilewati (duplikat)`, 'success');
+
+      await this._load();
+
+    } catch (err) {
+      prog.classList.add('hidden');
+      res.innerHTML = `<p class="font-semibold text-red-600">Error</p><p class="text-red-700 text-xs mt-1 whitespace-pre-wrap">${err.message}</p>`;
+      res.className = 'mt-3 p-3 rounded-lg bg-red-50 border border-red-100 text-sm';
+      res.classList.remove('hidden');
+    }
+  },
+
+  _toNum(v) {
+    const s = String(v).trim();
+    if (!s) return 0;
+    return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
+  },
+
+  _toDate(v) {
+    if (!v) return null;
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    const s = String(v);
+    const m = s.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+    if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    return null;
   },
 
   async delete(id) {
