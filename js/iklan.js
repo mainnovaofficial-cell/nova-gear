@@ -77,6 +77,14 @@ const Iklan = {
           <div><label class="label">Tahun</label>
             <input id="imp-ik-tahun" type="number" class="input" value="${now.getFullYear()}" min="2020" max="2035"/>
           </div>
+          <div class="col-span-2"><label class="label">Sumber Pembayaran *</label>
+            <select id="imp-ik-sumber" class="input">
+              <option>Kartu Kredit</option>
+              <option>Saldo BCA</option>
+              <option>Saldo Shopee</option>
+            </select>
+            <p class="text-xs text-gray-400 mt-1">Berlaku untuk semua produk di file ini — sesuaikan dari mana Isi Ulang Saldo Iklan bulan ini didanai.</p>
+          </div>
         </div>
         <div class="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer
                     hover:border-orange-300 hover:bg-orange-50/30 transition-colors"
@@ -98,8 +106,9 @@ const Iklan = {
     if (!file) return;
     const prog  = document.getElementById('ik-imp-progress');
     const res   = document.getElementById('ik-imp-result');
-    const bulan = parseInt(document.getElementById('imp-ik-bulan').value);
-    const tahun = parseInt(document.getElementById('imp-ik-tahun').value);
+    const bulan  = parseInt(document.getElementById('imp-ik-bulan').value);
+    const tahun  = parseInt(document.getElementById('imp-ik-tahun').value);
+    const sumber = document.getElementById('imp-ik-sumber').value;
 
     prog.textContent = 'Membaca file...';
     prog.classList.remove('hidden');
@@ -165,6 +174,7 @@ const Iklan = {
           konversi:     colKonv  !== -1 ? Math.round(this._toNum(row[colKonv])) : 0,
           omzet_iklan:  colOmzet !== -1 ? this._toNum(row[colOmzet]) : 0,
           acos:         colAcos  !== -1 ? this._toPercent(row[colAcos]) : 0,
+          sumber_bayar: sumber,
         });
       }
 
@@ -242,17 +252,19 @@ const Iklan = {
       el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"/></svg><p>Belum ada data import iklan untuk bulan ini</p></div>`;
       return;
     }
+    const sumberColor = { 'Saldo BCA': 'badge-blue', 'Saldo Shopee': 'badge-orange', 'default': 'badge-gray' };
     el.innerHTML = `
     <div class="table-wrapper">
       <table class="data-table">
         <thead><tr>
-          <th>Nama Iklan</th><th class="text-right">Biaya</th><th class="text-right">Konversi</th>
+          <th>Nama Iklan</th><th class="text-right">Biaya</th><th>Sumber Bayar</th><th class="text-right">Konversi</th>
           <th class="text-right">Omzet Iklan</th><th class="text-right">ACOS</th>
         </tr></thead>
         <tbody>${this._expenses.map(r => `
           <tr>
             <td class="max-w-[260px] truncate">${r.product_name}</td>
             <td class="text-right font-semibold text-money">${App.formatRupiah(r.biaya)}</td>
+            <td><span class="badge ${sumberColor[r.sumber_bayar]||sumberColor.default}">${r.sumber_bayar||'Kartu Kredit'}</span></td>
             <td class="text-right">${App.formatNumber(r.konversi || 0)}</td>
             <td class="text-right text-money">${App.formatRupiah(r.omzet_iklan)}</td>
             <td class="text-right">${(+r.acos || 0).toFixed(2)}%</td>
@@ -290,12 +302,13 @@ const Iklan = {
       'Shopee Ads': 'badge-orange', 'Meta': 'badge-blue', 'TikTok': 'badge-gray',
       'Google': 'badge-green', 'default': 'badge-blue',
     };
+    const sumberColor = { 'Saldo BCA': 'badge-blue', 'Saldo Shopee': 'badge-orange', 'default': 'badge-gray' };
     el.innerHTML = `
     <div class="table-wrapper">
       <table class="data-table">
         <thead><tr>
           <th>Tanggal</th><th>Platform</th><th>Kampanye</th>
-          <th class="text-right">Biaya</th><th class="text-right">Impresi</th>
+          <th class="text-right">Biaya</th><th>Sumber Bayar</th><th class="text-right">Impresi</th>
           <th class="text-right">Klik</th><th class="text-right">Order</th><th class="text-right">CPO</th><th></th>
         </tr></thead>
         <tbody>${this._data.map(r => {
@@ -305,6 +318,7 @@ const Iklan = {
             <td><span class="badge ${platformColor[r.platform]||platformColor.default}">${r.platform||'-'}</span></td>
             <td class="max-w-[160px] truncate">${r.campaign_name||'-'}</td>
             <td class="text-right font-semibold text-money">${App.formatRupiah(r.cost)}</td>
+            <td><span class="badge ${sumberColor[r.sumber_bayar]||sumberColor.default}">${r.sumber_bayar||'Kartu Kredit'}</span></td>
             <td class="text-right text-gray-500">${App.formatNumber(r.impressions||0)}</td>
             <td class="text-right text-gray-500">${App.formatNumber(r.clicks||0)}</td>
             <td class="text-right">${App.formatNumber(r.orders_count||0)}</td>
@@ -331,7 +345,14 @@ const Iklan = {
           </select>
         </div>
         <div class="col-span-2"><label class="label">Nama Kampanye</label><input id="ik-campaign" class="input" placeholder="Opsional"/></div>
-        <div class="col-span-2"><label class="label">Biaya (Rp) *</label><input id="ik-cost" type="number" class="input" placeholder="0"/></div>
+        <div><label class="label">Biaya (Rp) *</label><input id="ik-cost" type="number" class="input" placeholder="0"/></div>
+        <div><label class="label">Sumber Pembayaran *</label>
+          <select id="ik-sumber" class="input">
+            <option>Kartu Kredit</option>
+            <option>Saldo BCA</option>
+            <option>Saldo Shopee</option>
+          </select>
+        </div>
         <div class="col-span-2"><label class="label">Catatan</label><input id="ik-notes" class="input" placeholder="Opsional"/></div>
       </div>`,
       footer: `<button onclick="App.closeModal()" class="btn-secondary">Batal</button>
@@ -347,6 +368,7 @@ const Iklan = {
       platform:      document.getElementById('ik-platform').value,
       campaign_name: document.getElementById('ik-campaign').value.trim() || null,
       cost,
+      sumber_bayar:  document.getElementById('ik-sumber').value,
       notes:         document.getElementById('ik-notes').value.trim() || null,
     };
     const { error } = await App.db().from('ads').insert(payload);
@@ -370,7 +392,8 @@ const Iklan = {
   _exportCSV() {
     App.exportCSV(this._data.map(r => ({
       tanggal: r.ad_date, platform: r.platform, kampanye: r.campaign_name,
-      biaya: r.cost, impresi: r.impressions, klik: r.clicks, order: r.orders_count,
+      biaya: r.cost, sumber_bayar: r.sumber_bayar || 'Kartu Kredit',
+      impresi: r.impressions, klik: r.clicks, order: r.orders_count,
     })), 'iklan-export.csv');
   },
 };

@@ -684,6 +684,23 @@ create index if not exists penyesuaian_shopee_tanggal_idx on penyesuaian_shopee(
 create index if not exists penyesuaian_shopee_jenis_idx   on penyesuaian_shopee(jenis);
 
 -- ═══════════════════════════════════════════════════════
+--  MIGRASI v16 — Sumber Pembayaran Iklan (bedakan Kartu Kredit /
+--  Saldo BCA / Saldo Shopee, supaya Saldo BCA & Saldo Shopee akurat)
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- Selama ini SEMUA biaya iklan diasumsikan dibayar pakai Kartu Kredit (tidak
+-- pernah mengurangi Saldo BCA/Shopee sama sekali). Kolom ini membedakan iklan
+-- yang benar-benar dibayar dari Saldo BCA (mis. kartu kredit sedang limit)
+-- atau Saldo Shopee (Isi Ulang Saldo Iklan) supaya kedua saldo tetap akurat.
+-- Default 'Kartu Kredit' untuk semua baris lama menjaga perhitungan lama
+-- tidak berubah. Laba Rugi TIDAK terpengaruh — semua iklan tetap dihitung
+-- penuh sebagai biaya apapun sumber pembayarannya. Lihat js/dashboard.js
+-- (formula Saldo BCA & Saldo Shopee) dan js/iklan.js.
+alter table ads          add column if not exists sumber_bayar text not null default 'Kartu Kredit';
+alter table ads_expenses add column if not exists sumber_bayar text not null default 'Kartu Kredit';
+
+-- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup
 --  Untuk production, gunakan Supabase Auth + RLS policies.
 --  Untuk sementara (anon key): disable RLS di table settings.

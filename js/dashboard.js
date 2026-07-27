@@ -56,11 +56,11 @@ const Dashboard = {
       ] = await Promise.all([
         db.from('orders').select('order_no,status,created_at,order_date,qty,sku,source,selling_price'),
         db.from('hpp_items').select('sku,cost_per_unit,total_cost,created_at').order('created_at', { ascending: false }),
-        db.from('ads').select('cost,ad_date'),
+        db.from('ads').select('cost,ad_date,sumber_bayar'),
         db.from('operational').select('cost,op_date'),
         db.from('scan_logs').select('id,expedition,is_cancelled,scan_date').eq('scan_date', App.todayISO()),
         db.from('income_releases').select('order_no,gross_amount,discount,voucher_seller,net_amount,release_date'),
-        db.from('ads_expenses').select('biaya,month,year'),
+        db.from('ads_expenses').select('biaya,month,year,sumber_bayar'),
         db.from('kas_pribadi').select('tipe,jumlah'),
         db.from('hutang_pembayaran').select('sumber_kas_bisnis'),
         db.from('penarikan_saldo').select('jumlah'),
@@ -119,11 +119,11 @@ const Dashboard = {
       // karena uang belanja stok sudah keluar dari kas sejak tanggal beli, terlepas laku atau belum.
       // Semua pengeluaran (HPP, Operasional, Prive, Bayar Hutang) diasumsikan selalu
       // dibayar dari Saldo BCA — Owner selalu tarik dana dari Shopee ke BCA dulu baru bayar-bayar.
-      // Iklan (ads_expenses) TIDAK dikurangkan di sini — sejak Shopee Ads dibayar pakai Kartu
-      // Kredit (bukan potong otomatis dari Saldo Shopee/BCA lagi), data Iklan yang diimport
-      // cuma dipakai untuk laporan performa (ACOS, konversi, dll), bukan kalkulasi kas.
-      // Saat tagihan Kartu Kredit untuk Iklan dibayar (via Saldo BCA), itu dicatat manual
-      // sebagai Operasional oleh Owner — baru masuk ke totalOpAllTime di bawah.
+      // Iklan (ads & ads_expenses) HANYA dikurangkan dari Saldo BCA/Shopee kalau field
+      // sumber_bayar-nya "Saldo BCA"/"Saldo Shopee" (dipilih di form Tambah Iklan / Import CSV
+      // Iklan) — default "Kartu Kredit" TETAP tidak dikurangkan sama sekali dari kas manapun,
+      // karena kartu kredit dilunasi terpisah lewat tagihan (dicatat manual sebagai Operasional
+      // oleh Owner saat dibayar — baru masuk ke totalOpAllTime di bawah). Lihat js/iklan.js.
       //
       // Uang Muka Pembelian (DP ke supplier, dibayar sebelum barang+HPP-nya diinput):
       // uang keluar dari Saldo BCA SAAT DIBAYAR, terlepas nanti dipakai atau belum.
@@ -152,14 +152,21 @@ const Dashboard = {
       // (masuk) atau potongan biaya premi Gagal Kirim (keluar). Lihat js/penyesuaianshopee.js.
       const totalPenyesuaianMasukAllTime  = (penyesuaianShopee || []).filter(p => p.jenis === 'masuk').reduce((s, p) => s + (+p.jumlah || 0), 0);
       const totalPenyesuaianKeluarAllTime = (penyesuaianShopee || []).filter(p => p.jenis === 'keluar').reduce((s, p) => s + (+p.jumlah || 0), 0);
+      // Iklan yang sumber_bayar-nya "Saldo BCA"/"Saldo Shopee" — lihat catatan di atas.
+      const totalAdsBcaAllTime = sum((adsData || []).filter(a => a.sumber_bayar === 'Saldo BCA'), 'cost')
+        + sum((adsImport || []).filter(a => a.sumber_bayar === 'Saldo BCA'), 'biaya');
+      const totalAdsShopeeAllTime = sum((adsData || []).filter(a => a.sumber_bayar === 'Saldo Shopee'), 'cost')
+        + sum((adsImport || []).filter(a => a.sumber_bayar === 'Saldo Shopee'), 'biaya');
 
       const saldoShopee = modalAwalShopee + netRevAllTime - totalPenarikanAllTime
-        + totalPenyesuaianMasukAllTime - totalPenyesuaianKeluarAllTime;
+        + totalPenyesuaianMasukAllTime - totalPenyesuaianKeluarAllTime
+        - totalAdsShopeeAllTime;
       const saldoBCA = modalAwalBca + totalPenarikanAllTime
         - totalPembelianHPPAllTime - totalOpAllTime
         - totalUangMukaBelumTerpakai
         - totalPriveAllTime + totalSetoranAllTime
-        - totalBayarHutangKasBisnisAllTime;
+        - totalBayarHutangKasBisnisAllTime
+        - totalAdsBcaAllTime;
       const sisaKas = saldoShopee + saldoBCA;
 
       // ── Sisanya: mengikuti filter bulan yang dipilih ──
@@ -243,8 +250,8 @@ const Dashboard = {
 
       <!-- Row 1b: Saldo & Penarikan -->
       <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
-        ${this._bigCard('Saldo Shopee', App.formatRupiah(saldoShopee), 'Modal Awal + Net Diterima Shopee - Penarikan + Penyesuaian (all-time, tanpa Manual/Offline)', 'bg-orange-50','text-orange-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
-        ${this._bigCard('Saldo BCA', App.formatRupiah(saldoBCA), 'Modal Awal + Penarikan - HPP/Ops/Prive/Hutang/UangMuka (all-time, tanpa Iklan)', 'bg-indigo-50','text-indigo-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
+        ${this._bigCard('Saldo Shopee', App.formatRupiah(saldoShopee), 'Modal Awal + Net Diterima Shopee - Penarikan + Penyesuaian - Iklan dari Saldo Shopee (all-time, tanpa Manual/Offline)', 'bg-orange-50','text-orange-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
+        ${this._bigCard('Saldo BCA', App.formatRupiah(saldoBCA), 'Modal Awal + Penarikan - HPP/Ops/Prive/Hutang/UangMuka - Iklan dari Saldo BCA (all-time, Iklan Kartu Kredit/Shopee dikecualikan)', 'bg-indigo-50','text-indigo-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
         ${this._bigCard('Sisa Kas', App.formatRupiah(sisaKas), 'Saldo Shopee + Saldo BCA (total gabungan)', sisaKas>=0?'bg-sky-50':'bg-red-50', sisaKas>=0?'text-sky-600':'text-red-600','M9 8h6m-5 4h4m1 8H8a2 2 0 01-2-2V6a2 2 0 012-2h4.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V18a2 2 0 01-2 2z')}
       </div>`}
 
