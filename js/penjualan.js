@@ -338,8 +338,10 @@ const Penjualan = {
     prevD.setDate(prevD.getDate() - 1);
     const prev = prevD.toISOString().slice(0, 10);
 
-    const dayAll  = this._orders.filter(o => (o.created_at || '').slice(0, 10) === sel);
-    const prevAll = this._orders.filter(o => (o.created_at || '').slice(0, 10) === prev);
+    // Exclude Batal: pesanan lama yang baru masuk sistem via Import Mingguan
+    // (batal sebelum sempat dikirim) tidak boleh mengacaukan hitungan Rekap Harian.
+    const dayAll  = this._orders.filter(o => (o.created_at || '').slice(0, 10) === sel  && o.status !== 'Batal');
+    const prevAll = this._orders.filter(o => (o.created_at || '').slice(0, 10) === prev && o.status !== 'Batal');
 
     // Total Pesanan = unique order_no
     const uniqueNos = new Set(dayAll.map(o  => o.order_no || o.id));
