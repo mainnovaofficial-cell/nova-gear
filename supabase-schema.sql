@@ -659,6 +659,31 @@ create index if not exists uang_muka_pembelian_tanggal_idx  on uang_muka_pembeli
 create index if not exists uang_muka_pembelian_terpakai_idx on uang_muka_pembelian(terpakai);
 
 -- ═══════════════════════════════════════════════════════
+--  MIGRASI v15 — Penyesuaian Shopee (transaksi "Penyesuaian" dari
+--  laporan Saldo Shopee yang tidak terkait pesanan, mis. kompensasi
+--  barang hilang atau potongan biaya premi Gagal Kirim)
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- Transaksi ini tidak pernah muncul di file Import Income (bukan penghasilan
+-- pesanan), jadi selama ini tidak tercatat sama sekali di sistem dan membuat
+-- Saldo Shopee beda dengan Saldo Shopee real di aplikasi Shopee. Net-nya
+-- (masuk - keluar) ikut ditambahkan ke formula Saldo Shopee & Laba Rugi —
+-- lihat js/dashboard.js, js/labarugi.js, dan js/penyesuaianshopee.js.
+create table if not exists penyesuaian_shopee (
+  id          uuid primary key default gen_random_uuid(),
+  tanggal     date not null,
+  deskripsi   text,
+  jenis       text not null check (jenis in ('masuk', 'keluar')),
+  jumlah      numeric(14,2) default 0,
+  order_no    text,
+  created_at  timestamptz default now()
+);
+
+create index if not exists penyesuaian_shopee_tanggal_idx on penyesuaian_shopee(tanggal);
+create index if not exists penyesuaian_shopee_jenis_idx   on penyesuaian_shopee(jenis);
+
+-- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup
 --  Untuk production, gunakan Supabase Auth + RLS policies.
 --  Untuk sementara (anon key): disable RLS di table settings.
@@ -678,6 +703,7 @@ create index if not exists uang_muka_pembelian_terpakai_idx on uang_muka_pembeli
 -- alter table hutang_pembayaran enable row level security;
 -- alter table penarikan_saldo enable row level security;
 -- alter table uang_muka_pembelian enable row level security;
+-- alter table penyesuaian_shopee enable row level security;
 
 -- Policy allow all untuk anon (development — ganti untuk production)
 -- create policy "allow_all" on orders      for all using (true) with check (true);
@@ -693,3 +719,4 @@ create index if not exists uang_muka_pembelian_terpakai_idx on uang_muka_pembeli
 -- create policy "allow_all" on hutang_pembayaran for all using (true) with check (true);
 -- create policy "allow_all" on penarikan_saldo for all using (true) with check (true);
 -- create policy "allow_all" on uang_muka_pembelian for all using (true) with check (true);
+-- create policy "allow_all" on penyesuaian_shopee for all using (true) with check (true);

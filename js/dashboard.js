@@ -52,6 +52,7 @@ const Dashboard = {
         { data: hutangBayar, error: e9 },
         { data: penarikanSaldo, error: e10 },
         { data: uangMuka, error: e11 },
+        { data: penyesuaianShopee, error: e12 },
       ] = await Promise.all([
         db.from('orders').select('order_no,status,created_at,order_date,qty,sku,source,selling_price'),
         db.from('hpp_items').select('sku,cost_per_unit,total_cost,created_at').order('created_at', { ascending: false }),
@@ -64,8 +65,9 @@ const Dashboard = {
         db.from('hutang_pembayaran').select('sumber_kas_bisnis'),
         db.from('penarikan_saldo').select('jumlah'),
         db.from('uang_muka_pembelian').select('jumlah,terpakai'),
+        db.from('penyesuaian_shopee').select('jenis,jumlah'),
       ]);
-      if (e1 || e2 || e3 || e4 || e5 || e6 || e7 || e8 || e9 || e10 || e11) throw new Error((e1||e2||e3||e4||e5||e6||e7||e8||e9||e10||e11).message);
+      if (e1 || e2 || e3 || e4 || e5 || e6 || e7 || e8 || e9 || e10 || e11 || e12) throw new Error((e1||e2||e3||e4||e5||e6||e7||e8||e9||e10||e11||e12).message);
 
       const settings  = await App.getSettings();
       const modalAwalBca    = parseFloat(settings.modal_awal_bca || 0);
@@ -145,8 +147,14 @@ const Dashboard = {
       // dari Kas Bisnis (dibayar langsung dari kantong pribadi Owner).
       const totalBayarHutangKasBisnisAllTime = sum(hutangBayar || [], 'sumber_kas_bisnis');
       const totalPenarikanAllTime = sum(penarikanSaldo || [], 'jumlah');
+      // Penyesuaian Shopee: transaksi "Penyesuaian" dari laporan Saldo Shopee yang bukan
+      // penghasilan pesanan (tidak ada di Import Income) — mis. kompensasi barang hilang
+      // (masuk) atau potongan biaya premi Gagal Kirim (keluar). Lihat js/penyesuaianshopee.js.
+      const totalPenyesuaianMasukAllTime  = (penyesuaianShopee || []).filter(p => p.jenis === 'masuk').reduce((s, p) => s + (+p.jumlah || 0), 0);
+      const totalPenyesuaianKeluarAllTime = (penyesuaianShopee || []).filter(p => p.jenis === 'keluar').reduce((s, p) => s + (+p.jumlah || 0), 0);
 
-      const saldoShopee = modalAwalShopee + netRevAllTime - totalPenarikanAllTime;
+      const saldoShopee = modalAwalShopee + netRevAllTime - totalPenarikanAllTime
+        + totalPenyesuaianMasukAllTime - totalPenyesuaianKeluarAllTime;
       const saldoBCA = modalAwalBca + totalPenarikanAllTime
         - totalPembelianHPPAllTime - totalOpAllTime
         - totalUangMukaBelumTerpakai
@@ -235,7 +243,7 @@ const Dashboard = {
 
       <!-- Row 1b: Saldo & Penarikan -->
       <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
-        ${this._bigCard('Saldo Shopee', App.formatRupiah(saldoShopee), 'Modal Awal + Net Diterima Shopee - Penarikan (all-time, tanpa Manual/Offline)', 'bg-orange-50','text-orange-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
+        ${this._bigCard('Saldo Shopee', App.formatRupiah(saldoShopee), 'Modal Awal + Net Diterima Shopee - Penarikan + Penyesuaian (all-time, tanpa Manual/Offline)', 'bg-orange-50','text-orange-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
         ${this._bigCard('Saldo BCA', App.formatRupiah(saldoBCA), 'Modal Awal + Penarikan - HPP/Ops/Prive/Hutang/UangMuka (all-time, tanpa Iklan)', 'bg-indigo-50','text-indigo-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
         ${this._bigCard('Sisa Kas', App.formatRupiah(sisaKas), 'Saldo Shopee + Saldo BCA (total gabungan)', sisaKas>=0?'bg-sky-50':'bg-red-50', sisaKas>=0?'text-sky-600':'text-red-600','M9 8h6m-5 4h4m1 8H8a2 2 0 01-2-2V6a2 2 0 012-2h4.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V18a2 2 0 01-2 2z')}
       </div>`}

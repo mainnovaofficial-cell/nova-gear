@@ -84,7 +84,7 @@ const LabaRugi = {
       });
 
       // ── 4. Ads & Operasional bulan ini ──
-      const [{ data: ads, error: adsErr }, { data: ops, error: opsErr }, { data: adsImport, error: adsImpErr }, { data: manualOrders, error: manualErr }] = await Promise.all([
+      const [{ data: ads, error: adsErr }, { data: ops, error: opsErr }, { data: adsImport, error: adsImpErr }, { data: manualOrders, error: manualErr }, { data: penyesuaian, error: pysErr }] = await Promise.all([
         db.from('ads').select('cost,ad_date').gte('ad_date', dateFrom).lt('ad_date', dateTo),
         db.from('operational').select('cost,op_date').gte('op_date', dateFrom).lt('op_date', dateTo),
         db.from('ads_expenses').select('biaya').eq('month', bulan).eq('year', tahun),
@@ -97,11 +97,16 @@ const LabaRugi = {
           .eq('source', 'offline')
           .in('status', ['Selesai', 'Diproses'])
           .gte('order_date', dateFrom).lt('order_date', dateTo),
+        // Penyesuaian Shopee bulan ini (kompensasi/potongan non-pesanan) — pemasukan/pengeluaran
+        // lain-lain, bukan omzet. Lihat js/penyesuaianshopee.js.
+        db.from('penyesuaian_shopee').select('jenis,jumlah')
+          .gte('tanggal', dateFrom).lt('tanggal', dateTo),
       ]);
       if (adsErr) throw adsErr;
       if (opsErr) throw opsErr;
       if (adsImpErr) throw adsImpErr;
       if (manualErr) throw manualErr;
+      if (pysErr) throw pysErr;
 
       const sum = (arr, key) => (arr || []).reduce((s, r) => s + (+r[key] || 0), 0);
 
@@ -134,10 +139,16 @@ const LabaRugi = {
       const totalOps   = sum(ops, 'cost');
       const totalBeban = totalAds + totalOps;
 
-      const labaBersih       = labaKotor - totalBeban;
+      // Penyesuaian Shopee (kompensasi/potongan non-pesanan) — pemasukan/pengeluaran lain-lain,
+      // bukan omzet, tapi tetap ikut ke Laba Bersih & Posisi Kas supaya keduanya akurat.
+      const totalPenyesuaianMasuk  = (penyesuaian || []).filter(p => p.jenis === 'masuk').reduce((s, p) => s + (+p.jumlah || 0), 0);
+      const totalPenyesuaianKeluar = (penyesuaian || []).filter(p => p.jenis === 'keluar').reduce((s, p) => s + (+p.jumlah || 0), 0);
+      const netPenyesuaian = totalPenyesuaianMasuk - totalPenyesuaianKeluar;
+
+      const labaBersih       = labaKotor - totalBeban + netPenyesuaian;
       const marginPct        = omzetTotal > 0 ? (labaBersih / omzetTotal * 100) : 0;
-      const totalPemasukan   = netRev;
-      const totalPengeluaran = totalHPP + totalAds + totalOps;
+      const totalPemasukan   = netRev + totalPenyesuaianMasuk;
+      const totalPengeluaran = totalHPP + totalAds + totalOps + totalPenyesuaianKeluar;
       const sisaKas          = modalAwal + totalPemasukan - totalPengeluaran;
 
       const uniqueOrders   = orderNos.length;
@@ -184,6 +195,12 @@ const LabaRugi = {
           ])}
           ${this._total('Total Beban Usaha', -totalBeban, 'text-orange-700')}
 
+          <!-- PEMASUKAN/PENGELUARAN LAIN-LAIN -->
+          ${(totalPenyesuaianMasuk || totalPenyesuaianKeluar) ? this._section('PEMASUKAN/PENGELUARAN LAIN-LAIN (Penyesuaian Shopee)', [
+            { label: 'Penyesuaian Masuk (kompensasi, dll)', value: totalPenyesuaianMasuk, main: true },
+            { label: 'Penyesuaian Keluar (potongan, dll)', value: -totalPenyesuaianKeluar, main: true },
+          ]) : ''}
+
           <!-- LABA BERSIH -->
           <div class="px-5 py-4 ${labaBersih >= 0 ? 'bg-green-50' : 'bg-red-50'} border-t-2 ${labaBersih >= 0 ? 'border-green-200' : 'border-red-200'}">
             <div class="flex justify-between items-center">
@@ -202,11 +219,11 @@ const LabaRugi = {
                 <span class="font-semibold text-money text-sky-800">${App.formatRupiah(modalAwal)}</span>
               </div>
               <div class="flex justify-between items-center">
-                <span class="text-sky-700">+ Total Pemasukan (Net Diterima)</span>
+                <span class="text-sky-700">+ Total Pemasukan (Net Diterima + Penyesuaian Masuk)</span>
                 <span class="font-semibold text-money text-sky-800">${App.formatRupiah(totalPemasukan)}</span>
               </div>
               <div class="flex justify-between items-center">
-                <span class="text-sky-700">− Total Pengeluaran (HPP + Iklan + Ops)</span>
+                <span class="text-sky-700">− Total Pengeluaran (HPP + Iklan + Ops + Penyesuaian Keluar)</span>
                 <span class="font-semibold text-money text-red-600">${App.formatRupiah(totalPengeluaran)}</span>
               </div>
             </div>
