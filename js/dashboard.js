@@ -54,7 +54,7 @@ const Dashboard = {
         { data: uangMuka, error: e11 },
         { data: penyesuaianShopee, error: e12 },
       ] = await Promise.all([
-        db.from('orders').select('order_no,status,created_at,order_date,qty,sku,source,selling_price'),
+        db.from('orders').select('order_no,status,created_at,order_date,qty,sku,source,selling_price,metode_bayar'),
         db.from('hpp_items').select('sku,cost_per_unit,total_cost,created_at').order('created_at', { ascending: false }),
         db.from('ads').select('cost,ad_date,sumber_bayar'),
         db.from('operational').select('cost,op_date'),
@@ -112,6 +112,12 @@ const Dashboard = {
       const isManualLunas = (o) => o.source === 'offline' && (o.status === 'Selesai' || o.status === 'Diproses');
       const manualAll       = all.filter(isManualLunas);
       const manualAmount    = (o) => (+o.selling_price || 0) * (+o.qty || 1);
+      // Pesanan offline "Tunai" (default, termasuk baris lama tanpa metode_bayar) tetap
+      // dikecualikan total dari Saldo BCA/Shopee — uangnya tidak pernah lewat rekening/Shopee.
+      // "Transfer BCA"/"Transfer Shopee" berarti uangnya benar-benar masuk ke sana, jadi
+      // ikut ditambahkan (all-time, sama seperti komponen saldo lain). Lihat js/penjualan.js.
+      const manualTransferBcaAllTime    = manualAll.filter(o => o.metode_bayar === 'Transfer BCA').reduce((s, o) => s + manualAmount(o), 0);
+      const manualTransferShopeeAllTime = manualAll.filter(o => o.metode_bayar === 'Transfer Shopee').reduce((s, o) => s + manualAmount(o), 0);
 
       // ── Saldo Shopee & Saldo BCA: akumulasi SEMUA WAKTU, tidak ikut filter bulan ──
       // Basis kas riil (bukan accrual/matching seperti Laba Rugi): HPP yang dihitung adalah
@@ -160,13 +166,15 @@ const Dashboard = {
 
       const saldoShopee = modalAwalShopee + netRevAllTime - totalPenarikanAllTime
         + totalPenyesuaianMasukAllTime - totalPenyesuaianKeluarAllTime
-        - totalAdsShopeeAllTime;
+        - totalAdsShopeeAllTime
+        + manualTransferShopeeAllTime;
       const saldoBCA = modalAwalBca + totalPenarikanAllTime
         - totalPembelianHPPAllTime - totalOpAllTime
         - totalUangMukaBelumTerpakai
         - totalPriveAllTime + totalSetoranAllTime
         - totalBayarHutangKasBisnisAllTime
-        - totalAdsBcaAllTime;
+        - totalAdsBcaAllTime
+        + manualTransferBcaAllTime;
       const sisaKas = saldoShopee + saldoBCA;
 
       // ── Sisanya: mengikuti filter bulan yang dipilih ──
@@ -250,8 +258,8 @@ const Dashboard = {
 
       <!-- Row 1b: Saldo & Penarikan -->
       <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
-        ${this._bigCard('Saldo Shopee', App.formatRupiah(saldoShopee), 'Modal Awal + Net Diterima Shopee - Penarikan + Penyesuaian - Iklan dari Saldo Shopee (all-time, tanpa Manual/Offline)', 'bg-orange-50','text-orange-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
-        ${this._bigCard('Saldo BCA', App.formatRupiah(saldoBCA), 'Modal Awal + Penarikan - HPP/Ops/Prive/Hutang/UangMuka - Iklan dari Saldo BCA (all-time, Iklan Kartu Kredit/Shopee dikecualikan)', 'bg-indigo-50','text-indigo-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
+        ${this._bigCard('Saldo Shopee', App.formatRupiah(saldoShopee), 'Modal Awal + Net Diterima Shopee - Penarikan + Penyesuaian - Iklan + Manual/Offline metode Transfer Shopee (all-time, Tunai dikecualikan)', 'bg-orange-50','text-orange-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
+        ${this._bigCard('Saldo BCA', App.formatRupiah(saldoBCA), 'Modal Awal + Penarikan - HPP/Ops/Prive/Hutang/UangMuka - Iklan + Manual/Offline metode Transfer BCA (all-time, Iklan Kartu Kredit/Shopee & Manual Tunai dikecualikan)', 'bg-indigo-50','text-indigo-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
         ${this._bigCard('Sisa Kas', App.formatRupiah(sisaKas), 'Saldo Shopee + Saldo BCA (total gabungan)', sisaKas>=0?'bg-sky-50':'bg-red-50', sisaKas>=0?'text-sky-600':'text-red-600','M9 8h6m-5 4h4m1 8H8a2 2 0 01-2-2V6a2 2 0 012-2h4.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V18a2 2 0 01-2 2z')}
       </div>`}
 

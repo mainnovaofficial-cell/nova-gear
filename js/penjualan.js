@@ -301,7 +301,7 @@ const Penjualan = {
           <td>${isFirst ? (o.expedition||'-') : ''}</td>
           <td>${isFirst ? statusBadge(o.status) : ''}</td>
           <td>${isFirst ? this._stokActionBadge(o.stok_action) : ''}</td>
-          <td>${isFirst ? `<span class="badge ${o.source==='offline'?'badge-orange':'badge-blue'}">${o.source||'shopee'}</span>` : ''}</td>
+          <td>${isFirst ? `<span class="badge ${o.source==='offline'?'badge-orange':'badge-blue'}">${o.source||'shopee'}</span>${o.source==='offline' ? ` <span class="badge badge-gray">${o.metode_bayar||'Tunai'}</span>` : ''}` : ''}</td>
           <td>${isFirst ? batalBtn(o.id, o.status) : ''} ${editBtn(o)} ${hapusBtn(o)}</td>
         </tr>`;
       });
@@ -1615,6 +1615,12 @@ const Penjualan = {
             <option value="shopee"  ${o.source==='shopee'||!o.source?'selected':''}>Shopee</option>
           </select>
         </div>
+        <div><label class="label">Metode Pembayaran</label>
+          <select id="m-metode" class="input">
+            ${['Tunai','Transfer BCA','Transfer Shopee'].map(m => `<option ${(o.metode_bayar||'Tunai')===m?'selected':''}>${m}</option>`).join('')}
+          </select>
+          <p class="text-xs text-gray-400 mt-1">Berlaku untuk pesanan Offline — Transfer BCA/Shopee ikut menambah Saldo BCA/Shopee di Dashboard.</p>
+        </div>
         <div class="col-span-2"><label class="label">Catatan</label><input id="m-notes" class="input" value="${o.notes||''}" placeholder="Opsional"/></div>
       </div>`,
       footer: `
@@ -1645,6 +1651,13 @@ const Penjualan = {
           <select id="mm-source" class="input">
             <option value="offline" selected>Offline</option>
             <option value="shopee">Shopee (terlewat saat Import)</option>
+          </select>
+        </div>
+        <div><label class="label">Metode Pembayaran</label>
+          <select id="mm-metode" class="input">
+            <option>Tunai</option>
+            <option>Transfer BCA</option>
+            <option>Transfer Shopee</option>
           </select>
         </div>
       </div>
@@ -1710,6 +1723,7 @@ const Penjualan = {
     const expedition = document.getElementById('mm-exp').value.trim();
     const status     = document.getElementById('mm-status').value;
     const source     = document.getElementById('mm-source').value;
+    const metodeBayar = document.getElementById('mm-metode').value;
 
     const rows = this._manualRows
       .map(r => ({
@@ -1740,6 +1754,7 @@ const Penjualan = {
           status,
           stok_action:   this._determineStokAction(status, ''),
           source,        // dari dropdown "Sumber" — default "offline", bisa dipilih "shopee" untuk pesanan Shopee yang terlewat import
+          metode_bayar:  metodeBayar,
           notes:         '',
         };
 
@@ -1807,6 +1822,7 @@ const Penjualan = {
       status,
       stok_action:   stokInput || this._determineStokAction(status, ''),
       source:        document.getElementById('m-source').value,
+      metode_bayar:  document.getElementById('m-metode').value,
       notes:         document.getElementById('m-notes').value.trim(),
     };
 

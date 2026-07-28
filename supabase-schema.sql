@@ -701,6 +701,23 @@ alter table ads          add column if not exists sumber_bayar text not null def
 alter table ads_expenses add column if not exists sumber_bayar text not null default 'Kartu Kredit';
 
 -- ═══════════════════════════════════════════════════════
+--  MIGRASI v17 — Metode Pembayaran Pesanan Manual/Offline
+--  (Tunai / Transfer BCA / Transfer Shopee)
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- Sebelumnya SEMUA pesanan source='offline' dikecualikan total dari Saldo BCA
+-- & Saldo Shopee (diasumsikan selalu dibayar tunai). Itu salah untuk pesanan
+-- offline yang dibayar transfer — uangnya benar-benar masuk ke rekening tapi
+-- Saldo BCA/Shopee di sistem tidak ikut bertambah. Kolom ini membedakan cara
+-- pesanan offline dibayar, supaya hanya "Tunai" yang tetap dikecualikan.
+-- Default 'Tunai' untuk semua baris lama (termasuk source='shopee', yang
+-- tidak memakai kolom ini sama sekali) menjaga perhitungan lama tidak berubah.
+-- Lihat js/dashboard.js (formula Saldo BCA & Saldo Shopee) dan js/penjualan.js.
+alter table orders add column if not exists metode_bayar text not null default 'Tunai';
+update orders set metode_bayar = 'Tunai' where metode_bayar is null;
+
+-- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup
 --  Untuk production, gunakan Supabase Auth + RLS policies.
 --  Untuk sementara (anon key): disable RLS di table settings.
