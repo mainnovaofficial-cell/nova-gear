@@ -116,8 +116,27 @@ const Dashboard = {
       // dikecualikan total dari Saldo BCA/Shopee — uangnya tidak pernah lewat rekening/Shopee.
       // "Transfer BCA"/"Transfer Shopee" berarti uangnya benar-benar masuk ke sana, jadi
       // ikut ditambahkan (all-time, sama seperti komponen saldo lain). Lihat js/penjualan.js.
-      const manualTransferBcaAllTime    = manualAll.filter(o => o.metode_bayar === 'Transfer BCA').reduce((s, o) => s + manualAmount(o), 0);
-      const manualTransferShopeeAllTime = manualAll.filter(o => o.metode_bayar === 'Transfer Shopee').reduce((s, o) => s + manualAmount(o), 0);
+      //
+      // Metode Pembayaran berlaku 1 PESANAN, bukan per baris/item (satu order_no bisa
+      // punya beberapa baris, mis. per SKU + baris Ongkir terpisah) — supaya omzet
+      // pesanan (dijumlahkan dari seluruh barisnya) tidak salah hitung kalau ada baris
+      // yang metode_bayar-nya kebetulan belum sinkron, kelompokkan dulu per order_no
+      // (baris tanpa order_no dianggap pesanan sendiri) dan pakai metode_bayar baris
+      // PERTAMA dalam grup itu sebagai metode pesanan tsb. Lihat js/penjualan.js (saveManual).
+      const manualGroups = {};
+      manualAll.forEach(o => {
+        const key = o.order_no || `__row_${o.sku || ''}_${o.created_at || ''}`;
+        (manualGroups[key] || (manualGroups[key] = [])).push(o);
+      });
+      let manualTransferBcaAllTime = 0;
+      let manualTransferShopeeAllTime = 0;
+      Object.values(manualGroups).forEach(items => {
+        const metode = items[0].metode_bayar || 'Tunai';
+        if (metode !== 'Transfer BCA' && metode !== 'Transfer Shopee') return;
+        const total = items.reduce((s, o) => s + manualAmount(o), 0);
+        if (metode === 'Transfer BCA') manualTransferBcaAllTime += total;
+        else manualTransferShopeeAllTime += total;
+      });
 
       // ── Saldo Shopee & Saldo BCA: akumulasi SEMUA WAKTU, tidak ikut filter bulan ──
       // Basis kas riil (bukan accrual/matching seperti Laba Rugi): HPP yang dihitung adalah

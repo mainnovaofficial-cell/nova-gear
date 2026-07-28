@@ -718,6 +718,29 @@ alter table orders add column if not exists metode_bayar text not null default '
 update orders set metode_bayar = 'Tunai' where metode_bayar is null;
 
 -- ═══════════════════════════════════════════════════════
+--  MIGRASI v18 — Samakan Metode Pembayaran per Pesanan (order_no)
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- Sebelum perbaikan di js/penjualan.js (saveManual), mengedit metode_bayar lewat
+-- salah satu baris pesanan multi-item (mis. 2 baris SKU + 1 baris Ongkir dengan
+-- order_no sama) hanya menyimpan ke baris itu sendiri — baris lain dengan
+-- order_no yang sama bisa tertinggal nilai lama, sehingga 1 pesanan yang sama
+-- punya metode_bayar tidak konsisten antar barisnya. Migrasi ini menyamakan
+-- semua baris dalam 1 order_no memakai metode_bayar dari baris yang paling
+-- awal diinput (created_at paling kecil) untuk order_no tersebut.
+update orders o
+set metode_bayar = first_row.metode_bayar
+from (
+  select distinct on (order_no) order_no, metode_bayar
+  from orders
+  where order_no is not null
+  order by order_no, created_at asc
+) as first_row
+where o.order_no = first_row.order_no
+  and o.metode_bayar is distinct from first_row.metode_bayar;
+
+-- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup
 --  Untuk production, gunakan Supabase Auth + RLS policies.
 --  Untuk sementara (anon key): disable RLS di table settings.

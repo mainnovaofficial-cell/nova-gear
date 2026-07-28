@@ -1847,6 +1847,19 @@ const Penjualan = {
         const { error } = await App.db().from('orders').insert(payload);
         if (error) throw error;
       }
+
+      // Metode Pembayaran berlaku 1 pesanan, bukan per baris/item — kalau pesanan ini
+      // punya order_no (berarti bisa saja ada baris lain dgn SKU beda milik pesanan yang
+      // sama, mis. baris Ongkir terpisah), samakan metode_bayar semua baris tsb supaya
+      // tidak ada yang tertinggal "Tunai" sementara baris lain sudah "Transfer BCA"/dst —
+      // yang bisa bikin Saldo BCA/Shopee di Dashboard salah hitung.
+      if (payload.order_no) {
+        const { error: syncErr } = await App.db().from('orders')
+          .update({ metode_bayar: payload.metode_bayar })
+          .eq('order_no', payload.order_no);
+        if (syncErr) App.toast('Pesanan tersimpan, tapi gagal sinkronkan metode pembayaran ke baris lain: ' + syncErr.message, 'warning');
+      }
+
       App.closeModal();
       App.toast('Pesanan disimpan!', 'success');
       await this._loadOrders();
