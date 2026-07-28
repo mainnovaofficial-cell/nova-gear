@@ -261,6 +261,13 @@ const Penjualan = {
               class="text-xs text-blue-400 hover:text-blue-600 transition-colors font-medium whitespace-nowrap">
         Edit
       </button>`;
+    // Hapus permanen hanya utk pesanan manual/offline — pesanan hasil import Shopee tidak
+    // boleh dihapus manual (bikin inkonsistensi kalau file yang sama diimport ulang).
+    const hapusBtn = (o) => (o.source === 'offline' || o.source === 'manual') ? `
+      <button onclick="Penjualan.deleteManualOrder('${o.id}')"
+              class="text-xs text-red-400 hover:text-red-600 transition-colors font-medium whitespace-nowrap">
+        Hapus
+      </button>` : '';
 
     const groups = [];
     const groupMap = {};
@@ -295,7 +302,7 @@ const Penjualan = {
           <td>${isFirst ? statusBadge(o.status) : ''}</td>
           <td>${isFirst ? this._stokActionBadge(o.stok_action) : ''}</td>
           <td>${isFirst ? `<span class="badge ${o.source==='offline'?'badge-orange':'badge-blue'}">${o.source||'shopee'}</span>` : ''}</td>
-          <td>${isFirst ? batalBtn(o.id, o.status) : ''} ${editBtn(o)}</td>
+          <td>${isFirst ? batalBtn(o.id, o.status) : ''} ${editBtn(o)} ${hapusBtn(o)}</td>
         </tr>`;
       });
     });
@@ -568,6 +575,32 @@ const Penjualan = {
       this._orders[idx].status = 'Batal';
       this._orders[idx].stok_action = 'tidak_berubah';
     }
+    this._updateReviewBadge();
+    this._renderTab();
+  },
+
+  /* ── HAPUS PERMANEN (hanya pesanan manual/offline) ── */
+  async deleteManualOrder(id) {
+    if (!App.isOwner() && !App.isAdmin()) { App.toast('Hanya Owner/Admin yang dapat menghapus pesanan.', 'warning'); return; }
+
+    const order = this._orders.find(o => o.id === id);
+    if (!order) return;
+    // Jaga-jaga kalau tombol ini terpanggil di luar kondisi seharusnya (mis. data lama di DOM) —
+    // pesanan hasil import Shopee tidak boleh dihapus manual karena bikin inkonsistensi saat
+    // file yang sama diimport ulang (order_no-nya akan dianggap baru lagi, bukan duplikat).
+    if (order.source !== 'offline' && order.source !== 'manual') {
+      App.toast('Pesanan dari Shopee tidak dapat dihapus manual.', 'warning');
+      return;
+    }
+
+    const ok = await App.confirm(`Hapus pesanan ${order.order_no || 'manual'} (SKU: ${order.sku||'-'}, ${order.qty||1} unit)? Tindakan ini permanen.`);
+    if (!ok) return;
+
+    const { error } = await App.db().from('orders').delete().eq('id', id);
+    if (error) { App.toast('Gagal menghapus: ' + error.message, 'error'); return; }
+
+    App.toast('Pesanan dihapus permanen.', 'success');
+    this._orders = this._orders.filter(o => o.id !== id);
     this._updateReviewBadge();
     this._renderTab();
   },
