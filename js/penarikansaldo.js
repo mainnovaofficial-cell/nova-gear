@@ -8,11 +8,17 @@ const PenarikanSaldo = {
   _data: [],
 
   async onLoad() {
+    const now = new Date();
     const el = document.getElementById('page-penarikansaldo');
     el.innerHTML = `
     <div class="page-header">
       <div><h2>Penarikan Saldo</h2><p>Catat penarikan dana dari Saldo Shopee ke Saldo BCA</p></div>
-      <div class="flex gap-2">
+      <div class="flex gap-2 flex-wrap items-center">
+        <select id="ps-bulan" class="input !py-1 text-xs">
+          ${App.bulanOptionsHTML(now.getMonth() + 1)}
+        </select>
+        <input id="ps-tahun" type="number" class="input !py-1 text-xs w-24" value="${now.getFullYear()}" min="2020" max="2035"/>
+        <button onclick="PenarikanSaldo._applyPeriod()" class="btn-secondary text-xs">Tampilkan</button>
         <button onclick="PenarikanSaldo.openAdd()" class="btn-primary text-xs">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           Tambah Penarikan
@@ -34,28 +40,43 @@ const PenarikanSaldo = {
     const { data, error } = await App.db().from('penarikan_saldo').select('*').order('tanggal', { ascending: false });
     if (error) { App.toast('Gagal memuat Penarikan Saldo: ' + error.message, 'error'); return; }
     this._data = data || [];
+    this._applyPeriod();
+  },
+
+  _applyPeriod() {
     this._renderSummary();
     this._renderTable();
   },
 
+  // value "0" pada dropdown Bulan = "Semua" (tidak difilter periode).
+  _periodFiltered() {
+    const bulan = parseInt(document.getElementById('ps-bulan')?.value) || 0;
+    const tahun = parseInt(document.getElementById('ps-tahun')?.value) || new Date().getFullYear();
+    if (!bulan) return this._data;
+    const { dateFrom, dateTo } = App.monthRange(bulan, tahun);
+    return this._data.filter(r => r.tanggal && r.tanggal >= dateFrom && r.tanggal < dateTo);
+  },
+
   _renderSummary() {
-    const total = this._data.reduce((s, r) => s + (+r.jumlah || 0), 0);
+    const d = this._periodFiltered();
+    const total = d.reduce((s, r) => s + (+r.jumlah || 0), 0);
     document.getElementById('ps-summary').innerHTML = `
-      <div class="stat-card border-l-4 border-indigo-400"><p class="stat-label text-indigo-600">Total Penarikan</p><p class="stat-value text-indigo-600 text-money">${App.formatRupiah(total)}</p><p class="stat-sub">semua waktu — dari Shopee ke BCA</p></div>
-      <div class="stat-card"><p class="stat-label">Jumlah Transaksi</p><p class="stat-value text-money">${this._data.length}</p><p class="stat-sub">catatan penarikan</p></div>`;
+      <div class="stat-card border-l-4 border-indigo-400"><p class="stat-label text-indigo-600">Total Penarikan</p><p class="stat-value text-indigo-600 text-money">${App.formatRupiah(total)}</p><p class="stat-sub">periode terpilih — dari Shopee ke BCA</p></div>
+      <div class="stat-card"><p class="stat-label">Jumlah Transaksi</p><p class="stat-value text-money">${d.length}</p><p class="stat-sub">catatan penarikan</p></div>`;
   },
 
   _renderTable() {
     const el = document.getElementById('ps-table');
-    if (!this._data.length) {
-      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg><p>Belum ada data Penarikan Saldo</p></div>`;
+    const data = this._periodFiltered();
+    if (!data.length) {
+      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg><p>Belum ada data Penarikan Saldo untuk periode ini</p></div>`;
       return;
     }
     el.innerHTML = `
     <div class="table-wrapper">
       <table class="data-table">
         <thead><tr><th>Tanggal</th><th>Keterangan</th><th class="text-right">Jumlah</th><th></th></tr></thead>
-        <tbody>${this._data.map(r => `<tr>
+        <tbody>${data.map(r => `<tr>
           <td class="whitespace-nowrap">${App.formatDate(r.tanggal)}</td>
           <td class="max-w-[300px] truncate">${r.keterangan || '-'}</td>
           <td class="text-right font-semibold text-money">${App.formatRupiah(r.jumlah)}</td>
@@ -108,7 +129,7 @@ const PenarikanSaldo = {
   },
 
   _exportCSV() {
-    App.exportCSV(this._data.map(r => ({
+    App.exportCSV(this._periodFiltered().map(r => ({
       tanggal: r.tanggal, jumlah: r.jumlah, keterangan: r.keterangan,
     })), 'penarikan-saldo-export.csv');
   },

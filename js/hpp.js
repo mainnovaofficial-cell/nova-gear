@@ -22,10 +22,16 @@ const HPP = {
   },
 
   _shell() {
+    const now = new Date();
     return `
     <div class="page-header">
       <div><h2>HPP — Harga Pokok Pembelian</h2><p>Catat pembelian stok per batch dari supplier (China/Indonesia), dan Uang Muka yang dibayar duluan</p></div>
-      <div class="flex gap-2">
+      <div class="flex gap-2 flex-wrap items-center">
+        <select id="hpp-bulan" class="input !py-1 text-xs">
+          ${App.bulanOptionsHTML(now.getMonth() + 1)}
+        </select>
+        <input id="hpp-tahun" type="number" class="input !py-1 text-xs w-24" value="${now.getFullYear()}" min="2020" max="2035"/>
+        <button onclick="HPP._applyPeriod()" class="btn-secondary text-xs">Tampilkan</button>
         <button id="hpp-btn-add-pembelian" onclick="HPP.openAdd()" class="btn-primary text-xs">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           Tambah Pembelian
@@ -44,6 +50,32 @@ const HPP = {
     <div id="hpp-tab-content"></div>`;
   },
 
+  // value "0" pada dropdown Bulan = "Semua" (tidak difilter periode).
+  _period() {
+    const bulan = parseInt(document.getElementById('hpp-bulan')?.value) || 0;
+    const tahun = parseInt(document.getElementById('hpp-tahun')?.value) || new Date().getFullYear();
+    return { bulan, tahun };
+  },
+
+  _periodFilteredBatches() {
+    const { bulan, tahun } = this._period();
+    if (!bulan) return this._data;
+    const { dateFrom, dateTo } = App.monthRange(bulan, tahun);
+    return this._data.filter(b => b.purchase_date && b.purchase_date >= dateFrom && b.purchase_date < dateTo);
+  },
+
+  _periodFilteredUM() {
+    const { bulan, tahun } = this._period();
+    if (!bulan) return this._umData;
+    const { dateFrom, dateTo } = App.monthRange(bulan, tahun);
+    return this._umData.filter(u => u.tanggal && u.tanggal >= dateFrom && u.tanggal < dateTo);
+  },
+
+  _applyPeriod() {
+    this._renderBanner();
+    this._renderTab();
+  },
+
   async _load() {
     const [hppRes, umRes] = await Promise.all([
       App.db().from('hpp_batches').select('*, hpp_items(*)').order('purchase_date', { ascending: false }),
@@ -53,8 +85,7 @@ const HPP = {
     if (umRes.error)  { App.toast('Gagal memuat Uang Muka: ' + umRes.error.message, 'error'); return; }
     this._data   = hppRes.data || [];
     this._umData = umRes.data || [];
-    this._renderBanner();
-    this._renderTab();
+    this._applyPeriod();
   },
 
   _switchTab(tab, btn) {
@@ -112,8 +143,9 @@ const HPP = {
   },
 
   _renderSummary() {
-    const items = this._data.flatMap(b => b.hpp_items || []);
-    const totalBatch = this._data.length;
+    const data = this._periodFilteredBatches();
+    const items = data.flatMap(b => b.hpp_items || []);
+    const totalBatch = data.length;
     const totalUnit  = items.reduce((s,it) => s + (+it.qty||0), 0);
     const totalCost  = items.reduce((s,it) => s + (+it.total_cost||0), 0);
     const cards = [
@@ -127,13 +159,14 @@ const HPP = {
 
   _renderTable() {
     const el = document.getElementById('hpp-table');
-    if (!this._data.length) {
-      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg><p>Belum ada data pembelian</p></div>`;
+    const data = this._periodFilteredBatches();
+    if (!data.length) {
+      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg><p>Belum ada data pembelian untuk periode ini</p></div>`;
       return;
     }
     const sourceLabel = s => s === 'china' ? 'China (¥)' : 'Indonesia (Rp)';
     let rows = '';
-    this._data.forEach(b => {
+    data.forEach(b => {
       const items = b.hpp_items || [];
       if (!items.length) {
         rows += `<tr>
@@ -560,7 +593,7 @@ const HPP = {
   _exportCSV() {
     const sourceLabel = s => s === 'china' ? 'China' : 'Indonesia';
     const rows = [];
-    this._data.forEach(b => {
+    this._periodFilteredBatches().forEach(b => {
       (b.hpp_items || []).forEach(it => {
         rows.push({
           tanggal: b.purchase_date, batch_no: b.batch_no, sumber: sourceLabel(b.source),
@@ -580,7 +613,7 @@ const HPP = {
   ══════════════════════════════════════════════ */
 
   _renderUMSummary() {
-    const d = this._umData;
+    const d = this._periodFilteredUM();
     const total  = d.reduce((s, r) => s + (+r.jumlah || 0), 0);
     const unused = d.filter(r => !r.terpakai);
     const used   = d.filter(r => r.terpakai);
@@ -595,11 +628,12 @@ const HPP = {
 
   _renderUMTable() {
     const el = document.getElementById('hpp-um-table');
-    if (!this._umData.length) {
-      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg><p>Belum ada data uang muka</p></div>`;
+    const data = this._periodFilteredUM();
+    if (!data.length) {
+      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg><p>Belum ada data uang muka untuk periode ini</p></div>`;
       return;
     }
-    const rows = this._umData.map(r => {
+    const rows = data.map(r => {
       const batch = r.hpp_batches;
       const batchLabel = batch ? (batch.batch_no || App.formatDate(batch.purchase_date)) : '-';
       const actionBtn = r.terpakai
@@ -673,7 +707,7 @@ const HPP = {
   },
 
   _exportUMCSV() {
-    App.exportCSV(this._umData.map(r => ({
+    App.exportCSV(this._periodFilteredUM().map(r => ({
       tanggal: r.tanggal, deskripsi: r.deskripsi, jumlah: r.jumlah,
       status: r.terpakai ? 'Terpakai' : 'Belum Terpakai',
       batch_terkait: r.hpp_batches ? (r.hpp_batches.batch_no || r.hpp_batches.purchase_date || '') : '',

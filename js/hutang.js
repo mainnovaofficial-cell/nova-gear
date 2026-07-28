@@ -7,17 +7,24 @@ const Hutang = {
   _data: [],
 
   async onLoad() {
+    const now = new Date();
     const el = document.getElementById('page-hutang');
     el.innerHTML = `
     <div class="page-header">
       <div><h2>Hutang & Cicilan</h2><p>Pantau pinjaman dan progres pembayaran cicilan</p></div>
-      <div class="flex gap-2">
+      <div class="flex gap-2 flex-wrap items-center">
+        <select id="hu-bulan" class="input !py-1 text-xs">
+          ${App.bulanOptionsHTML(now.getMonth() + 1)}
+        </select>
+        <input id="hu-tahun" type="number" class="input !py-1 text-xs w-24" value="${now.getFullYear()}" min="2020" max="2035"/>
+        <button onclick="Hutang._applyPeriod()" class="btn-secondary text-xs">Tampilkan</button>
         <button onclick="Hutang.openAdd()" class="btn-primary text-xs">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           Tambah Hutang
         </button>
       </div>
     </div>
+    <p class="text-xs text-gray-400 mb-3">Filter periode berdasarkan tanggal hutang dicatat. Riwayat pembayaran cicilan di tiap kartu tetap menampilkan semua waktu.</p>
     <div id="hu-summary" class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5"></div>
     <div id="hu-list" class="space-y-4"></div>`;
     await this._load();
@@ -30,8 +37,25 @@ const Hutang = {
       .order('created_at', { ascending: false });
     if (error) { App.toast('Gagal memuat Hutang: ' + error.message, 'error'); return; }
     this._data = data || [];
+    this._applyPeriod();
+  },
+
+  _applyPeriod() {
     this._renderSummary();
     this._renderList();
+  },
+
+  // value "0" pada dropdown Bulan = "Semua" (tidak difilter periode). Filter berdasarkan
+  // created_at (tanggal hutang dicatat) — bukan cicilan.tanggal, supaya 1 hutang tetap 1 kartu utuh.
+  _periodFiltered() {
+    const bulan = parseInt(document.getElementById('hu-bulan')?.value) || 0;
+    const tahun = parseInt(document.getElementById('hu-tahun')?.value) || new Date().getFullYear();
+    if (!bulan) return this._data;
+    const { dateFrom, dateTo } = App.monthRange(bulan, tahun);
+    return this._data.filter(h => {
+      const d = (h.created_at || '').slice(0, 10);
+      return d && d >= dateFrom && d < dateTo;
+    });
   },
 
   _sisaHutang(h) {
@@ -40,22 +64,24 @@ const Hutang = {
   },
 
   _renderSummary() {
-    const totalHutang = this._data.reduce((s, h) => s + (+h.jumlah_total || 0), 0);
-    const totalSisa    = this._data.reduce((s, h) => s + Math.max(this._sisaHutang(h), 0), 0);
-    const totalLunas   = this._data.filter(h => this._sisaHutang(h) <= 0).length;
+    const data = this._periodFiltered();
+    const totalHutang = data.reduce((s, h) => s + (+h.jumlah_total || 0), 0);
+    const totalSisa    = data.reduce((s, h) => s + Math.max(this._sisaHutang(h), 0), 0);
+    const totalLunas   = data.filter(h => this._sisaHutang(h) <= 0).length;
     document.getElementById('hu-summary').innerHTML = `
-      <div class="stat-card"><p class="stat-label">Total Hutang</p><p class="stat-value text-money">${App.formatRupiah(totalHutang)}</p><p class="stat-sub">${this._data.length} hutang tercatat</p></div>
+      <div class="stat-card"><p class="stat-label">Total Hutang</p><p class="stat-value text-money">${App.formatRupiah(totalHutang)}</p><p class="stat-sub">${data.length} hutang tercatat</p></div>
       <div class="stat-card border-l-4 border-red-400"><p class="stat-label text-red-600">Sisa Hutang</p><p class="stat-value text-red-500 text-money">${App.formatRupiah(totalSisa)}</p><p class="stat-sub">belum lunas</p></div>
-      <div class="stat-card border-l-4 border-green-400"><p class="stat-label text-green-600">Lunas</p><p class="stat-value text-green-600">${totalLunas} / ${this._data.length}</p><p class="stat-sub">hutang selesai dibayar</p></div>`;
+      <div class="stat-card border-l-4 border-green-400"><p class="stat-label text-green-600">Lunas</p><p class="stat-value text-green-600">${totalLunas} / ${data.length}</p><p class="stat-sub">hutang selesai dibayar</p></div>`;
   },
 
   _renderList() {
     const el = document.getElementById('hu-list');
-    if (!this._data.length) {
-      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg><p>Belum ada data hutang</p></div>`;
+    const data = this._periodFiltered();
+    if (!data.length) {
+      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg><p>Belum ada data hutang untuk periode ini</p></div>`;
       return;
     }
-    el.innerHTML = this._data.map(h => {
+    el.innerHTML = data.map(h => {
       const payments  = (h.hutang_pembayaran || []).slice().sort((a, b) => (b.tanggal || '').localeCompare(a.tanggal || ''));
       const sisa      = this._sisaHutang(h);
       const lunas     = sisa <= 0;

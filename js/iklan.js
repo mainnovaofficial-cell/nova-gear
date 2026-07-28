@@ -14,7 +14,12 @@ const Iklan = {
     el.innerHTML = `
     <div class="page-header">
       <div><h2>Iklan & Marketing</h2><p>Import biaya iklan Shopee per produk dan catat biaya manual lainnya</p></div>
-      <div class="flex gap-2">
+      <div class="flex gap-2 flex-wrap items-center">
+        <select id="ik-bulan" class="input !py-1 text-xs">
+          ${App.bulanOptionsHTML(now.getMonth() + 1)}
+        </select>
+        <input id="ik-tahun" type="number" class="input !py-1 text-xs w-24" value="${now.getFullYear()}" min="2020" max="2035"/>
+        <button onclick="Iklan._applyPeriod()" class="btn-secondary text-xs">Tampilkan</button>
         <button onclick="Iklan.openImportAds()" class="btn-primary text-xs">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
           Import CSV Iklan
@@ -29,14 +34,7 @@ const Iklan = {
     <div class="card mb-5">
       <div class="card-header mb-3 flex-wrap gap-2">
         <span class="card-title">Iklan Shopee per Produk</span>
-        <div class="flex gap-2 items-center">
-          <select id="ik-bulan" class="input !py-1 text-xs">
-            ${this._bulanNames.map((m, i) => i === 0 ? '' : `<option value="${i}" ${i === now.getMonth()+1 ? 'selected' : ''}>${m}</option>`).join('')}
-          </select>
-          <input id="ik-tahun" type="number" class="input !py-1 text-xs w-24" value="${now.getFullYear()}" min="2020" max="2035"/>
-          <button onclick="Iklan._loadExpenses()" class="btn-secondary text-xs !py-1">Tampilkan</button>
-          <button onclick="Iklan._deleteExpensesMonth()" class="btn-secondary text-xs !py-1 text-red-600">Hapus Data Bulan Ini</button>
-        </div>
+        <button onclick="Iklan._deleteExpensesMonth()" class="btn-secondary text-xs !py-1 text-red-600">Hapus Data Bulan Ini</button>
       </div>
       <div id="iklan-exp-summary" class="grid grid-cols-1 sm:max-w-xs gap-3 mb-4"></div>
       <div id="iklan-exp-table"></div>
@@ -51,6 +49,19 @@ const Iklan = {
       <div id="iklan-table"></div>
     </div>`;
     await Promise.all([this._loadExpenses(), this._load()]);
+  },
+
+  // value "0" pada dropdown Bulan = "Semua" (tidak difilter periode).
+  _period() {
+    const bulan = parseInt(document.getElementById('ik-bulan')?.value) || 0;
+    const tahun = parseInt(document.getElementById('ik-tahun')?.value) || new Date().getFullYear();
+    return { bulan, tahun };
+  },
+
+  async _applyPeriod() {
+    await this._loadExpenses();
+    this._renderSummary();
+    this._renderTable();
   },
 
   /* ═══════════════════════════════════════════════
@@ -222,19 +233,19 @@ const Iklan = {
   },
 
   async _loadExpenses() {
-    const bulan = parseInt(document.getElementById('ik-bulan')?.value) || (new Date().getMonth() + 1);
-    const tahun = parseInt(document.getElementById('ik-tahun')?.value) || new Date().getFullYear();
-    const { data, error } = await App.db().from('ads_expenses').select('*')
-      .eq('month', bulan).eq('year', tahun).order('biaya', { ascending: false });
+    const { bulan, tahun } = this._period();
+    let query = App.db().from('ads_expenses').select('*').order('biaya', { ascending: false });
+    if (bulan) query = query.eq('month', bulan).eq('year', tahun); // 0 = Semua → tidak difilter
+    const { data, error } = await query;
     if (error) { App.toast('Gagal memuat data iklan: ' + error.message, 'error'); return; }
     this._expenses = data || [];
     this._renderExpenses();
   },
 
   async _deleteExpensesMonth() {
-    const bulan = parseInt(document.getElementById('ik-bulan')?.value) || (new Date().getMonth() + 1);
-    const tahun = parseInt(document.getElementById('ik-tahun')?.value) || new Date().getFullYear();
-    const ok = await App.confirm(`Hapus semua data iklan Shopee per produk untuk ${this._bulanNames[bulan]} ${tahun}? Tindakan ini tidak dapat dibatalkan.`);
+    const { bulan, tahun } = this._period();
+    if (!bulan) { App.toast('Pilih bulan tertentu dulu (bukan "Semua") untuk menghapus data.', 'warning'); return; }
+    const ok = await App.confirm(`Hapus semua data iklan Shopee per produk untuk ${App.BULAN_NAMES[bulan]} ${tahun}? Tindakan ini tidak dapat dibatalkan.`);
     if (!ok) return;
     const { error } = await App.db().from('ads_expenses').delete().eq('month', bulan).eq('year', tahun);
     if (error) { App.toast('Gagal hapus: ' + error.message, 'error'); return; }
@@ -243,13 +254,14 @@ const Iklan = {
   },
 
   _renderExpenses() {
+    const { bulan } = this._period();
     const totalBiaya = this._expenses.reduce((s, r) => s + (+r.biaya || 0), 0);
     document.getElementById('iklan-exp-summary').innerHTML = `
-      <div class="stat-card"><p class="stat-label">Total Biaya Iklan Bulan Ini</p><p class="stat-value text-money">${App.formatRupiah(totalBiaya)}</p><p class="stat-sub">${this._expenses.length} produk</p></div>`;
+      <div class="stat-card"><p class="stat-label">Total Biaya Iklan Shopee</p><p class="stat-value text-money">${App.formatRupiah(totalBiaya)}</p><p class="stat-sub">${this._expenses.length} produk — ${bulan ? 'periode terpilih' : 'semua waktu'}</p></div>`;
 
     const el = document.getElementById('iklan-exp-table');
     if (!this._expenses.length) {
-      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"/></svg><p>Belum ada data import iklan untuk bulan ini</p></div>`;
+      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"/></svg><p>Belum ada data import iklan untuk periode ini</p></div>`;
       return;
     }
     const sumberColor = { 'Saldo BCA': 'badge-blue', 'Saldo Shopee': 'badge-orange', 'default': 'badge-gray' };
@@ -284,18 +296,26 @@ const Iklan = {
     this._renderTable();
   },
 
+  _periodFilteredAds() {
+    const { bulan, tahun } = this._period();
+    if (!bulan) return this._data;
+    const { dateFrom, dateTo } = App.monthRange(bulan, tahun);
+    return this._data.filter(r => r.ad_date && r.ad_date >= dateFrom && r.ad_date < dateTo);
+  },
+
   _renderSummary() {
-    const d = this._data;
+    const d = this._periodFilteredAds();
     const totalCost = d.reduce((s,r) => s+(+r.cost||0), 0);
 
     document.getElementById('iklan-summary').innerHTML = `
-      <div class="stat-card"><p class="stat-label">Total Biaya Iklan Manual</p><p class="stat-value text-money">${App.formatRupiah(totalCost)}</p><p class="stat-sub">semua platform</p></div>`;
+      <div class="stat-card"><p class="stat-label">Total Biaya Iklan Manual</p><p class="stat-value text-money">${App.formatRupiah(totalCost)}</p><p class="stat-sub">semua platform — periode terpilih</p></div>`;
   },
 
   _renderTable() {
     const el = document.getElementById('iklan-table');
-    if (!this._data.length) {
-      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"/></svg><p>Belum ada data iklan</p></div>`;
+    const data = this._periodFilteredAds();
+    if (!data.length) {
+      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"/></svg><p>Belum ada data iklan untuk periode ini</p></div>`;
       return;
     }
     const platformColor = {
@@ -311,7 +331,7 @@ const Iklan = {
           <th class="text-right">Biaya</th><th>Sumber Bayar</th><th class="text-right">Impresi</th>
           <th class="text-right">Klik</th><th class="text-right">Order</th><th class="text-right">CPO</th><th></th>
         </tr></thead>
-        <tbody>${this._data.map(r => {
+        <tbody>${data.map(r => {
           const cpo = (+r.orders_count||0) > 0 ? (+r.cost||0) / (+r.orders_count) : 0;
           return `<tr>
             <td class="whitespace-nowrap">${App.formatDate(r.ad_date)}</td>
@@ -390,7 +410,7 @@ const Iklan = {
   },
 
   _exportCSV() {
-    App.exportCSV(this._data.map(r => ({
+    App.exportCSV(this._periodFilteredAds().map(r => ({
       tanggal: r.ad_date, platform: r.platform, kampanye: r.campaign_name,
       biaya: r.cost, sumber_bayar: r.sumber_bayar || 'Kartu Kredit',
       impresi: r.impressions, klik: r.clicks, order: r.orders_count,

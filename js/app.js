@@ -516,6 +516,28 @@ const App = {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
   },
 
+  // Nama bulan Indonesia, index 1-12 (index 0 sengaja kosong supaya bisa diindeks langsung pakai nomor bulan).
+  BULAN_NAMES: ['','Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'],
+
+  // Rentang tanggal (half-open: dateFrom <= d < dateTo) untuk 1 bulan — dipakai filter periode di berbagai halaman.
+  monthRange(bulan, tahun) {
+    const dateFrom = `${tahun}-${String(bulan).padStart(2, '0')}-01`;
+    const next     = new Date(tahun, bulan, 1);
+    const dateTo   = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-01`;
+    return { dateFrom, dateTo };
+  },
+
+  // Opsi <option> untuk dropdown filter Bulan — value "0" = "Semua" (tampilkan semua periode).
+  bulanOptionsHTML(selectedBulan, includeSemua = true) {
+    const opts = [];
+    if (includeSemua) opts.push(`<option value="0" ${+selectedBulan === 0 ? 'selected' : ''}>Semua</option>`);
+    this.BULAN_NAMES.forEach((m, i) => {
+      if (i === 0) return;
+      opts.push(`<option value="${i}" ${i === +selectedBulan ? 'selected' : ''}>${m}</option>`);
+    });
+    return opts.join('');
+  },
+
   isOwner() {
     return AppState.user?.role === 'owner';
   },

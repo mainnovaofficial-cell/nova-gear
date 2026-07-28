@@ -16,12 +16,35 @@ const Penjualan = {
     const el = document.getElementById('page-penjualan');
     el.innerHTML = `<div class="p-8 text-center text-gray-400 text-sm">Memuat data pesanan...</div>`;
     await this._loadOrders();
+    // Default periode = bulan berjalan (bukan all-time) supaya data antar bulan tidak tercampur.
+    const now = new Date();
+    const { dateFrom, dateTo } = App.monthRange(now.getMonth() + 1, now.getFullYear());
+    this._filter.dateFrom = dateFrom;
+    this._filter.dateTo   = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
     el.innerHTML = this._shell();
     this._renderTab();
     this._updateReviewBadge();
   },
 
+  // Konversi pilihan dropdown Bulan+Tahun jadi rentang tanggal utk pj-from/pj-to (inklusif).
+  // value "0" pada dropdown Bulan = "Semua" → kosongkan rentang (tampilkan semua periode).
+  _applyBulanFilter() {
+    const bulan = parseInt(document.getElementById('pj-bulan')?.value) || 0;
+    const tahun = parseInt(document.getElementById('pj-tahun')?.value) || new Date().getFullYear();
+    if (!bulan) {
+      document.getElementById('pj-from').value = '';
+      document.getElementById('pj-to').value   = '';
+    } else {
+      document.getElementById('pj-from').value = `${tahun}-${String(bulan).padStart(2, '0')}-01`;
+      document.getElementById('pj-to').value   = new Date(tahun, bulan, 0).toISOString().slice(0, 10);
+    }
+    this._onFilter();
+  },
+
   _shell() {
+    const now = new Date();
+    const filterBulan = this._filter.dateFrom ? +this._filter.dateFrom.slice(5, 7) : 0;
+    const filterTahun = this._filter.dateFrom ? +this._filter.dateFrom.slice(0, 4) : now.getFullYear();
     return `
     <div class="page-header">
       <div>
@@ -60,6 +83,12 @@ const Penjualan = {
     <!-- Filters -->
     <div class="card mb-4 !py-3">
       <div class="flex flex-wrap gap-2 items-center">
+        <select id="pj-bulan" class="input !py-1.5 text-xs w-32">
+          ${App.bulanOptionsHTML(filterBulan)}
+        </select>
+        <input id="pj-tahun" type="number" class="input !py-1.5 text-xs w-20" value="${filterTahun}" min="2020" max="2035"/>
+        <button onclick="Penjualan._applyBulanFilter()" class="btn-secondary text-xs !py-1.5">Tampilkan</button>
+        <span class="h-5 w-px bg-gray-200"></span>
         <input id="pj-search" type="text" placeholder="Cari no. pesanan / produk / SKU..." class="input w-56 !py-1.5 text-xs" oninput="Penjualan._onFilter()"/>
         <select id="pj-status" class="input w-44 !py-1.5 text-xs" onchange="Penjualan._onFilter()">
           <option value="">Semua Status</option>
@@ -70,8 +99,8 @@ const Penjualan = {
           <option>Batal</option>
           <option>Retur</option>
         </select>
-        <input id="pj-from" type="date" class="input w-36 !py-1.5 text-xs" onchange="Penjualan._onFilter()"/>
-        <input id="pj-to"   type="date" class="input w-36 !py-1.5 text-xs" onchange="Penjualan._onFilter()"/>
+        <input id="pj-from" type="date" class="input w-36 !py-1.5 text-xs" value="${this._filter.dateFrom}" onchange="Penjualan._onFilter()"/>
+        <input id="pj-to"   type="date" class="input w-36 !py-1.5 text-xs" value="${this._filter.dateTo}"   onchange="Penjualan._onFilter()"/>
         <button onclick="Penjualan._resetFilter()" class="btn-secondary text-xs !py-1.5">Reset</button>
         <span id="pj-count" class="text-xs text-gray-400 ml-auto"></span>
       </div>
@@ -645,6 +674,7 @@ const Penjualan = {
 
   _resetFilter() {
     this._filter = { status: '', q: '', dateFrom: '', dateTo: '' };
+    document.getElementById('pj-bulan').value  = '0';
     document.getElementById('pj-search').value = '';
     document.getElementById('pj-status').value = '';
     document.getElementById('pj-from').value   = '';

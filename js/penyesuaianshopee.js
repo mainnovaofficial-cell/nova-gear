@@ -10,11 +10,17 @@ const PenyesuaianShopee = {
   _data: [],
 
   async onLoad() {
+    const now = new Date();
     const el = document.getElementById('page-penyesuaianshopee');
     el.innerHTML = `
     <div class="page-header">
       <div><h2>Penyesuaian Shopee</h2><p>Catatan transaksi Penyesuaian dari laporan Saldo Shopee</p></div>
-      <div class="flex gap-2">
+      <div class="flex gap-2 flex-wrap items-center">
+        <select id="pys-bulan" class="input !py-1 text-xs">
+          ${App.bulanOptionsHTML(now.getMonth() + 1)}
+        </select>
+        <input id="pys-tahun" type="number" class="input !py-1 text-xs w-24" value="${now.getFullYear()}" min="2020" max="2035"/>
+        <button onclick="PenyesuaianShopee._applyPeriod()" class="btn-secondary text-xs">Tampilkan</button>
         <button onclick="PenyesuaianShopee.openImport()" class="btn-secondary text-xs">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
           Import Penyesuaian
@@ -45,13 +51,27 @@ const PenyesuaianShopee = {
     const { data, error } = await App.db().from('penyesuaian_shopee').select('*').order('tanggal', { ascending: false });
     if (error) { App.toast('Gagal memuat Penyesuaian Shopee: ' + error.message, 'error'); return; }
     this._data = data || [];
+    this._applyPeriod();
+  },
+
+  _applyPeriod() {
     this._renderSummary();
     this._renderTable();
   },
 
+  // value "0" pada dropdown Bulan = "Semua" (tidak difilter periode).
+  _periodFiltered() {
+    const bulan = parseInt(document.getElementById('pys-bulan')?.value) || 0;
+    const tahun = parseInt(document.getElementById('pys-tahun')?.value) || new Date().getFullYear();
+    if (!bulan) return this._data;
+    const { dateFrom, dateTo } = App.monthRange(bulan, tahun);
+    return this._data.filter(r => r.tanggal && r.tanggal >= dateFrom && r.tanggal < dateTo);
+  },
+
   _renderSummary() {
-    const totalMasuk  = this._data.filter(r => r.jenis === 'masuk').reduce((s, r) => s + (+r.jumlah || 0), 0);
-    const totalKeluar = this._data.filter(r => r.jenis === 'keluar').reduce((s, r) => s + (+r.jumlah || 0), 0);
+    const d = this._periodFiltered();
+    const totalMasuk  = d.filter(r => r.jenis === 'masuk').reduce((s, r) => s + (+r.jumlah || 0), 0);
+    const totalKeluar = d.filter(r => r.jenis === 'keluar').reduce((s, r) => s + (+r.jumlah || 0), 0);
     const net = totalMasuk - totalKeluar;
     document.getElementById('pys-summary').innerHTML = `
       <div class="stat-card border-l-4 border-green-400"><p class="stat-label text-green-600">Total Masuk</p><p class="stat-value text-green-600 text-money">${App.formatRupiah(totalMasuk)}</p><p class="stat-sub">kompensasi / penyesuaian masuk</p></div>
@@ -61,8 +81,9 @@ const PenyesuaianShopee = {
 
   _renderTable() {
     const el = document.getElementById('pys-table');
-    if (!this._data.length) {
-      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 7h6m0 10v-3m-3 3v-6m-3 6v-3m-2 6h10a2 2 0 002-2V5a2 2 0 00-2-2H6a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg><p>Belum ada data Penyesuaian Shopee</p></div>`;
+    const data = this._periodFiltered();
+    if (!data.length) {
+      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 7h6m0 10v-3m-3 3v-6m-3 6v-3m-2 6h10a2 2 0 002-2V5a2 2 0 00-2-2H6a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg><p>Belum ada data Penyesuaian Shopee untuk periode ini</p></div>`;
       return;
     }
     const jenisBadge = j => j === 'masuk'
@@ -72,7 +93,7 @@ const PenyesuaianShopee = {
     <div class="table-wrapper">
       <table class="data-table">
         <thead><tr><th>Tanggal</th><th>Deskripsi</th><th>No. Pesanan</th><th>Jenis</th><th class="text-right">Jumlah</th><th></th></tr></thead>
-        <tbody>${this._data.map(r => `<tr>
+        <tbody>${data.map(r => `<tr>
           <td class="whitespace-nowrap">${App.formatDate(r.tanggal)}</td>
           <td class="max-w-[320px] truncate" title="${r.deskripsi || ''}">${r.deskripsi || '-'}</td>
           <td class="font-mono text-xs text-gray-500">${r.order_no || '-'}</td>
@@ -326,7 +347,7 @@ const PenyesuaianShopee = {
   },
 
   _exportCSV() {
-    App.exportCSV(this._data.map(r => ({
+    App.exportCSV(this._periodFiltered().map(r => ({
       tanggal: r.tanggal, deskripsi: r.deskripsi, order_no: r.order_no, jenis: r.jenis, jumlah: r.jumlah,
     })), 'penyesuaian-shopee-export.csv');
   },

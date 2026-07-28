@@ -8,11 +8,17 @@ const KasPribadi = {
   _filter: 'semua', // 'semua' | 'prive' | 'setoran'
 
   async onLoad() {
+    const now = new Date();
     const el = document.getElementById('page-kaspribadi');
     el.innerHTML = `
     <div class="page-header">
       <div><h2>Kas Pribadi</h2><p>Catat penarikan pribadi (Prive) dan modal masuk (Setoran)</p></div>
-      <div class="flex gap-2">
+      <div class="flex gap-2 flex-wrap items-center">
+        <select id="kp-bulan" class="input !py-1 text-xs">
+          ${App.bulanOptionsHTML(now.getMonth() + 1)}
+        </select>
+        <input id="kp-tahun" type="number" class="input !py-1 text-xs w-24" value="${now.getFullYear()}" min="2020" max="2035"/>
+        <button onclick="KasPribadi._applyPeriod()" class="btn-secondary text-xs">Tampilkan</button>
         <button onclick="KasPribadi.openAdd()" class="btn-primary text-xs">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           Tambah Transaksi
@@ -41,8 +47,21 @@ const KasPribadi = {
     const { data, error } = await App.db().from('kas_pribadi').select('*').order('tanggal', { ascending: false });
     if (error) { App.toast('Gagal memuat Kas Pribadi: ' + error.message, 'error'); return; }
     this._data = data || [];
+    this._applyPeriod();
+  },
+
+  _applyPeriod() {
     this._renderSummary();
     this._renderTable();
+  },
+
+  // value "0" pada dropdown Bulan = "Semua" (tidak difilter periode).
+  _periodFiltered() {
+    const bulan = parseInt(document.getElementById('kp-bulan')?.value) || 0;
+    const tahun = parseInt(document.getElementById('kp-tahun')?.value) || new Date().getFullYear();
+    if (!bulan) return this._data;
+    const { dateFrom, dateTo } = App.monthRange(bulan, tahun);
+    return this._data.filter(r => r.tanggal && r.tanggal >= dateFrom && r.tanggal < dateTo);
   },
 
   _setFilter(val) {
@@ -51,20 +70,22 @@ const KasPribadi = {
   },
 
   _renderSummary() {
-    const totalPrive   = this._data.filter(r => r.tipe === 'prive').reduce((s, r) => s + (+r.jumlah || 0), 0);
-    const totalSetoran = this._data.filter(r => r.tipe === 'setoran').reduce((s, r) => s + (+r.jumlah || 0), 0);
+    const d = this._periodFiltered();
+    const totalPrive   = d.filter(r => r.tipe === 'prive').reduce((s, r) => s + (+r.jumlah || 0), 0);
+    const totalSetoran = d.filter(r => r.tipe === 'setoran').reduce((s, r) => s + (+r.jumlah || 0), 0);
     const selisih = totalSetoran - totalPrive;
     document.getElementById('kp-summary').innerHTML = `
-      <div class="stat-card border-l-4 border-red-400"><p class="stat-label text-red-600">Total Prive</p><p class="stat-value text-red-500 text-money">${App.formatRupiah(totalPrive)}</p><p class="stat-sub">semua waktu — penarikan pribadi</p></div>
-      <div class="stat-card border-l-4 border-green-400"><p class="stat-label text-green-600">Total Setoran</p><p class="stat-value text-green-600 text-money">${App.formatRupiah(totalSetoran)}</p><p class="stat-sub">semua waktu — modal masuk</p></div>
+      <div class="stat-card border-l-4 border-red-400"><p class="stat-label text-red-600">Total Prive</p><p class="stat-value text-red-500 text-money">${App.formatRupiah(totalPrive)}</p><p class="stat-sub">periode terpilih — penarikan pribadi</p></div>
+      <div class="stat-card border-l-4 border-green-400"><p class="stat-label text-green-600">Total Setoran</p><p class="stat-value text-green-600 text-money">${App.formatRupiah(totalSetoran)}</p><p class="stat-sub">periode terpilih — modal masuk</p></div>
       <div class="stat-card"><p class="stat-label">Selisih (Setoran − Prive)</p><p class="stat-value text-money ${selisih>=0?'text-blue-600':'text-red-500'}">${App.formatRupiah(selisih)}</p><p class="stat-sub">dampak bersih ke Kas Bisnis</p></div>`;
   },
 
   _renderTable() {
     const el = document.getElementById('kp-table');
-    const rows = this._filter === 'semua' ? this._data : this._data.filter(r => r.tipe === this._filter);
+    const base = this._periodFiltered();
+    const rows = this._filter === 'semua' ? base : base.filter(r => r.tipe === this._filter);
     if (!rows.length) {
-      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg><p>Belum ada data Kas Pribadi</p></div>`;
+      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg><p>Belum ada data Kas Pribadi untuk periode ini</p></div>`;
       return;
     }
     el.innerHTML = `
@@ -132,7 +153,9 @@ const KasPribadi = {
   },
 
   _exportCSV() {
-    App.exportCSV(this._data.map(r => ({
+    const base = this._periodFiltered();
+    const rows = this._filter === 'semua' ? base : base.filter(r => r.tipe === this._filter);
+    App.exportCSV(rows.map(r => ({
       tanggal: r.tanggal, tipe: r.tipe, jumlah: r.jumlah, keterangan: r.keterangan,
     })), 'kas-pribadi-export.csv');
   },

@@ -8,11 +8,17 @@ const Operasional = {
   _categories: ['Packaging', 'Gaji & Honor', 'Listrik', 'Internet', 'Sewa', 'Transportasi', 'Peralatan', 'Lainnya'],
 
   async onLoad() {
+    const now = new Date();
     const el = document.getElementById('page-operasional');
     el.innerHTML = `
     <div class="page-header">
       <div><h2>Operasional</h2><p>Catat semua biaya operasional toko</p></div>
-      <div class="flex gap-2">
+      <div class="flex gap-2 flex-wrap items-center">
+        <select id="ops-bulan" class="input !py-1 text-xs">
+          ${App.bulanOptionsHTML(now.getMonth() + 1)}
+        </select>
+        <input id="ops-tahun" type="number" class="input !py-1 text-xs w-24" value="${now.getFullYear()}" min="2020" max="2035"/>
+        <button onclick="Operasional._applyPeriod()" class="btn-secondary text-xs">Tampilkan</button>
         <button onclick="Operasional.openAdd()" class="btn-primary text-xs">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           Tambah Biaya
@@ -42,28 +48,40 @@ const Operasional = {
     const { data, error } = await query;
     if (error) { App.toast('Gagal memuat operasional.', 'error'); return; }
     this._data = data || [];
+    this._applyPeriod();
+  },
+
+  _applyPeriod() {
     this._renderSummary();
     this._renderTable();
     this._renderCategory();
   },
 
+  // value "0" pada dropdown Bulan = "Semua" (tidak difilter periode).
+  _periodFiltered() {
+    const bulan = parseInt(document.getElementById('ops-bulan')?.value) || 0;
+    const tahun = parseInt(document.getElementById('ops-tahun')?.value) || new Date().getFullYear();
+    if (!bulan) return this._data;
+    const { dateFrom, dateTo } = App.monthRange(bulan, tahun);
+    return this._data.filter(r => r.op_date && r.op_date >= dateFrom && r.op_date < dateTo);
+  },
+
   _renderSummary() {
-    const d = this._data;
-    const total      = d.reduce((s, r) => s + (+r.cost || 0), 0);
-    const thisMonth  = d.filter(r => (r.op_date || '').slice(0, 7) === App.todayISO().slice(0, 7));
-    const monthTotal = thisMonth.reduce((s, r) => s + (+r.cost || 0), 0);
-    const unpaid     = d.filter(r => (r.payment_status || 'Belum Dibayar') !== 'Sudah Dibayar');
+    const d = this._periodFiltered();
+    const total       = d.reduce((s, r) => s + (+r.cost || 0), 0);
+    const unpaid      = d.filter(r => (r.payment_status || 'Belum Dibayar') !== 'Sudah Dibayar');
     const unpaidTotal = unpaid.reduce((s, r) => s + (+r.cost || 0), 0);
     document.getElementById('ops-summary').innerHTML = `
-      <div class="stat-card"><p class="stat-label">Total Operasional</p><p class="stat-value text-money">${App.formatRupiah(total)}</p><p class="stat-sub">semua waktu</p></div>
-      <div class="stat-card"><p class="stat-label">Bulan Ini</p><p class="stat-value text-money">${App.formatRupiah(monthTotal)}</p><p class="stat-sub">${App.todayISO().slice(0, 7)}</p></div>
+      <div class="stat-card"><p class="stat-label">Total Operasional</p><p class="stat-value text-money">${App.formatRupiah(total)}</p><p class="stat-sub">periode terpilih</p></div>
+      <div class="stat-card"><p class="stat-label">Jumlah Transaksi</p><p class="stat-value text-money">${App.formatNumber(d.length)}</p><p class="stat-sub">periode terpilih</p></div>
       <div class="stat-card border-l-4 border-red-400"><p class="stat-label text-red-600">Total Belum Dibayar</p><p class="stat-value text-red-500">${App.formatRupiah(unpaidTotal)}</p><p class="stat-sub">${unpaid.length} pengeluaran</p></div>`;
   },
 
   _renderTable() {
     const el = document.getElementById('ops-table');
-    if (!this._data.length) {
-      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg><p>Belum ada biaya operasional</p></div>`;
+    const data = this._periodFiltered();
+    if (!data.length) {
+      el.innerHTML = `<div class="empty-state py-10"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg><p>Belum ada biaya operasional untuk periode ini</p></div>`;
       return;
     }
     const isOwner = !App.isAdmin();
@@ -71,7 +89,7 @@ const Operasional = {
     <div class="table-wrapper">
       <table class="data-table">
         <thead><tr><th>Tanggal</th><th>Kategori</th><th>Deskripsi</th><th class="text-right">Biaya</th><th>Rutin</th><th>Status</th><th></th></tr></thead>
-        <tbody>${this._data.map(r => {
+        <tbody>${data.map(r => {
           const status = r.payment_status || 'Belum Dibayar';
           const isPaid = status === 'Sudah Dibayar';
           const badgeClass = isPaid
@@ -102,7 +120,7 @@ const Operasional = {
   _renderCategory() {
     const el = document.getElementById('ops-category');
     const map = {};
-    this._data.forEach(r => {
+    this._periodFiltered().forEach(r => {
       const c = r.category || 'Lainnya';
       map[c] = (map[c] || 0) + (+r.cost || 0);
     });
@@ -176,8 +194,7 @@ const Operasional = {
     if (error) { App.toast('Gagal ubah status: ' + error.message, 'error'); return; }
     const row = this._data.find(r => r.id === id);
     if (row) row.payment_status = newStatus;
-    this._renderSummary();
-    this._renderTable();
+    this._applyPeriod();
   },
 
   async delete(id) {
@@ -187,13 +204,11 @@ const Operasional = {
     if (error) { App.toast('Gagal hapus: ' + error.message, 'error'); return; }
     App.toast('Data dihapus.', 'success');
     this._data = this._data.filter(r => r.id !== id);
-    this._renderSummary();
-    this._renderTable();
-    this._renderCategory();
+    this._applyPeriod();
   },
 
   _exportCSV() {
-    App.exportCSV(this._data.map(r => ({
+    App.exportCSV(this._periodFiltered().map(r => ({
       tanggal: r.op_date, kategori: r.category, deskripsi: r.description,
       biaya: r.cost, rutin: r.recurring ? 'Ya' : 'Tidak',
       status_pembayaran: r.payment_status || 'Belum Dibayar',
