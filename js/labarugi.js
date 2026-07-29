@@ -12,7 +12,7 @@ const LabaRugi = {
     const el    = document.getElementById('page-labarugi');
     el.innerHTML = `
     <div class="page-header">
-      <div><h2>Laba Rugi</h2><p>Laporan otomatis berdasarkan bulan rilis dana (Income Shopee)</p></div>
+      <div><h2>Laba Rugi</h2><p>Laporan otomatis berdasarkan bulan pesanan (order_date)</p></div>
       <div class="flex gap-2 flex-wrap items-center">
         <select id="lr-bulan" class="input !py-1 text-xs">
           ${this._bulanNames.map((m, i) => i === 0 ? '' : `<option value="${i}" ${i === now.getMonth()+1 ? 'selected' : ''}>${m}</option>`).join('')}
@@ -41,36 +41,50 @@ const LabaRugi = {
       const nextMonth = new Date(tahun, bulan, 1); // bulan 1-based → index ini = bulan berikutnya
       const dateTo = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
 
-      // ── 1. Income releases bulan ini (Net Diterima) ──
-      const { data: releasesData, error: relErr } = await db
-        .from('income_releases')
-        .select('order_no,release_date,gross_amount,discount,voucher_seller,net_amount')
-        .gte('release_date', dateFrom)
-        .lt('release_date', dateTo);
-      if (relErr) throw relErr;
-      const releases = releasesData || [];
-      const orderNos = [...new Set(releases.map(r => r.order_no).filter(Boolean))];
+      // ── 1. Semua pesanan bulan ini (order_date) — basis Omzet & pencocokan ke Income ──
+      // BUKAN release_date/income_releases (kapan dana Shopee cair) — release_date bisa
+      // beda bulan dari order_date, sehingga pesanan bulan lalu yang baru cair bulan ini
+      // dulu ikut kehitung sebagai omzet bulan ini. Lihat perbaikan yang sama di Dashboard
+      // (js/dashboard.js).
+      const { data: monthOrdersData, error: ordErr } = await db
+        .from('orders')
+        .select('order_no,sku,qty,status,source,selling_price,order_date')
+        .gte('order_date', dateFrom).lt('order_date', dateTo);
+      if (ordErr) throw ordErr;
+      // Omzet: semua pesanan bulan ini KECUALI status 'Batal'.
+      const omzetOrders = (monthOrdersData || []).filter(o => o.status !== 'Batal');
+      const omzetLineAmount = (o) => (+o.selling_price || 0) * (+o.qty || 1);
 
-      // ── 2. Order lines (qty, sku) untuk pesanan Selesai/Diproses yang match income bulan ini ──
+      // ── 2. Income releases yang match ke pesanan Shopee (source ≠ 'offline') bulan ini —
+      // dicocokkan via order_no, BUKAN difilter release_date. Pesanan yang dana-nya belum
+      // cair (belum ada baris income_releases utk order_no itu) belum ikut Net Diterima/HPP
+      // — otomatis masuk begitu Import Income berikutnya jalan dan halaman ini dihitung ulang.
+      const shopeeOrderNos = [...new Set(
+        omzetOrders.filter(o => o.source !== 'offline' && o.order_no).map(o => o.order_no)
+      )];
+      let releases = [];
+      if (shopeeOrderNos.length) {
+        const BATCH = 100;
+        for (let i = 0; i < shopeeOrderNos.length; i += BATCH) {
+          const chunk = shopeeOrderNos.slice(i, i + BATCH);
+          const { data, error } = await db
+            .from('income_releases')
+            .select('order_no,gross_amount,discount,voucher_seller,net_amount')
+            .in('order_no', chunk);
+          if (error) throw error;
+          releases.push(...(data || []));
+        }
+      }
+      const matchedOrderNos = new Set(releases.map(r => r.order_no).filter(Boolean));
+
+      // ── 3. Order lines (qty, sku) pesanan Shopee Selesai/Diproses yang SUDAH match Income —
+      // HPP hanya diakui untuk pesanan yang datanya sudah dikonfirmasi rilis dananya.
       // Status final pesanan adalah "Selesai" (Import Income tidak lagi mengubah status jadi
       // "Dibayar" — lihat importIncomeFile di js/penjualan.js). "Diproses" ikut dihitung karena
       // dana bisa saja sudah dirilis Shopee sebelum status pesanan sempat diupdate ke "Selesai".
-      let orderLines = [];
-      if (orderNos.length) {
-        const BATCH = 100;
-        for (let i = 0; i < orderNos.length; i += BATCH) {
-          const chunk = orderNos.slice(i, i + BATCH);
-          const { data, error } = await db
-            .from('orders')
-            .select('order_no,sku,qty,status')
-            .in('status', ['Selesai', 'Diproses'])
-            .in('order_no', chunk);
-          if (error) throw error;
-          orderLines.push(...(data || []));
-        }
-      }
+      const orderLines = omzetOrders.filter(o => matchedOrderNos.has(o.order_no) && (o.status === 'Selesai' || o.status === 'Diproses'));
 
-      // ── 3. HPP per SKU terbaru ──
+      // ── 4. HPP per SKU terbaru ──
       const { data: hppItemsData, error: hppErr } = await db
         .from('hpp_items')
         .select('sku,cost_per_unit,created_at,hpp_batches(purchase_date)')
@@ -83,20 +97,11 @@ const LabaRugi = {
         hppMap[k] = +r.cost_per_unit || 0;
       });
 
-      // ── 4. Ads & Operasional bulan ini ──
-      const [{ data: ads, error: adsErr }, { data: ops, error: opsErr }, { data: adsImport, error: adsImpErr }, { data: manualOrders, error: manualErr }, { data: penyesuaian, error: pysErr }] = await Promise.all([
+      // ── 5. Ads & Operasional bulan ini ──
+      const [{ data: ads, error: adsErr }, { data: ops, error: opsErr }, { data: adsImport, error: adsImpErr }, { data: penyesuaian, error: pysErr }] = await Promise.all([
         db.from('ads').select('cost,ad_date').gte('ad_date', dateFrom).lt('ad_date', dateTo),
         db.from('operational').select('cost,op_date').gte('op_date', dateFrom).lt('op_date', dateTo),
         db.from('ads_expenses').select('biaya').eq('month', bulan).eq('year', tahun),
-        // Pesanan Manual/Offline bulan ini — tidak pernah muncul di income_releases karena
-        // bukan transaksi Shopee. Tidak ada potongan platform, jadi Net Diterima-nya = Harga
-        // Jual penuh (selling_price × qty). HPP-nya tetap dihitung seperti biasa (tidak berubah)
-        // lewat orderLines di atas — orderLines HANYA match ke income_releases, jadi HPP pesanan
-        // manual ini sengaja TIDAK ikut ditambahkan ke Total Pengeluaran.
-        db.from('orders').select('sku,qty,selling_price')
-          .eq('source', 'offline')
-          .in('status', ['Selesai', 'Diproses'])
-          .gte('order_date', dateFrom).lt('order_date', dateTo),
         // Penyesuaian Shopee bulan ini (kompensasi/potongan non-pesanan) — pemasukan/pengeluaran
         // lain-lain, bukan omzet. Lihat js/penyesuaianshopee.js.
         db.from('penyesuaian_shopee').select('jenis,jumlah')
@@ -105,17 +110,24 @@ const LabaRugi = {
       if (adsErr) throw adsErr;
       if (opsErr) throw opsErr;
       if (adsImpErr) throw adsImpErr;
-      if (manualErr) throw manualErr;
       if (pysErr) throw pysErr;
 
       const sum = (arr, key) => (arr || []).reduce((s, r) => s + (+r[key] || 0), 0);
 
-      const grossAmount  = sum(releases, 'gross_amount');
+      // Pesanan Manual/Offline bulan ini — tidak pernah muncul di income_releases karena
+      // bukan transaksi Shopee. Tidak ada potongan platform, jadi Net Diterima-nya = Harga
+      // Jual penuh (selling_price × qty). HPP-nya tetap dihitung seperti biasa (tidak berubah)
+      // lewat orderLines di atas — orderLines HANYA match ke income_releases, jadi HPP pesanan
+      // manual ini sengaja TIDAK ikut ditambahkan ke Total Pengeluaran.
+      const manualOrders = omzetOrders.filter(o => o.source === 'offline');
+      const manualGross  = manualOrders.reduce((s, o) => s + omzetLineAmount(o), 0);
+      // Harga jual pesanan Shopee bulan ini — LANGSUNG dari tabel orders (order_date),
+      // bukan income_releases.gross_amount (yang cuma mencakup pesanan yang sudah rilis).
+      const shopeeGrossOrders = omzetOrders.filter(o => o.source !== 'offline').reduce((s, o) => s + omzetLineAmount(o), 0);
       const discount     = sum(releases, 'discount');
       const voucher      = sum(releases, 'voucher_seller');
       const netRevShopee = sum(releases, 'net_amount');
-      const manualGross  = (manualOrders || []).reduce((s, o) => s + (+o.selling_price || 0) * (+o.qty || 1), 0);
-      const omzetTotal   = grossAmount + manualGross;
+      const omzetTotal   = shopeeGrossOrders + manualGross;
       const netRev       = netRevShopee + manualGross;
 
       // HPP = qty × HPP per unit per SKU (hpp_items) — kecuali SKU freebie "-F" → freebie default
@@ -151,8 +163,10 @@ const LabaRugi = {
       const totalPengeluaran = totalHPP + totalAds + totalOps + totalPenyesuaianKeluar;
       const sisaKas          = modalAwal + totalPemasukan - totalPengeluaran;
 
-      const uniqueOrders   = orderNos.length;
-      const unmatchedCount = orderNos.length - new Set(orderLines.map(o => o.order_no)).size;
+      // Pesanan Shopee bulan ini yang BELUM ada baris income_releases (dana belum cair) —
+      // HPP/Freebie-nya belum ikut Total Pengeluaran sampai Import Income berikutnya jalan.
+      const shopeeOrderCount = shopeeOrderNos.length;
+      const belumRilisCount  = shopeeOrderCount - matchedOrderNos.size;
 
       const label = `${this._bulanNames[bulan]} ${tahun}`;
 
@@ -169,7 +183,7 @@ const LabaRugi = {
 
           <!-- PENDAPATAN -->
           ${this._section('PENDAPATAN', [
-            { label: 'Harga Asli Produk (Income Shopee)', value: grossAmount, main: true },
+            { label: 'Harga Jual Produk (Pesanan Shopee)', value: shopeeGrossOrders, main: true },
             { label: 'Penjualan Manual/Offline', value: manualGross, main: true },
           ])}
           ${this._subsection('Potongan (khusus Income Shopee)', [
@@ -238,13 +252,13 @@ const LabaRugi = {
         <div class="card mt-4">
           <p class="card-title mb-3">Ringkasan Pesanan Selesai/Diproses</p>
           <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 text-center">
-            ${[['Pesanan di Income', uniqueOrders, ''], ['Item Terjual (Qty)', qtyTerjual, 'text-blue-600'], ['Tanpa Data Qty', Math.max(unmatchedCount, 0), unmatchedCount > 0 ? 'text-orange-600' : 'text-gray-400']].map(([l, v, c]) => `
+            ${[['Pesanan Shopee Bulan Ini', shopeeOrderCount, ''], ['Item Terjual (Qty)', qtyTerjual, 'text-blue-600'], ['Belum Rilis Income', Math.max(belumRilisCount, 0), belumRilisCount > 0 ? 'text-orange-600' : 'text-gray-400']].map(([l, v, c]) => `
             <div class="bg-gray-50 rounded-lg p-3">
               <p class="text-xs text-gray-500">${l}</p>
               <p class="text-xl font-bold ${c}">${App.formatNumber(v)}</p>
             </div>`).join('')}
           </div>
-          ${unmatchedCount > 0 ? `<p class="text-xs text-orange-600 mt-3">${unmatchedCount} pesanan ada di file Income tapi tidak ditemukan sebagai pesanan status "Selesai"/"Diproses" di tabel Pesanan (HPP/Freebie-nya tidak terhitung).</p>` : ''}
+          ${belumRilisCount > 0 ? `<p class="text-xs text-orange-600 mt-3">${belumRilisCount} pesanan Shopee bulan ini belum ada baris Income (dana belum cair) — HPP/Freebie-nya belum ikut Total Pengeluaran sampai Import Income berikutnya jalan.</p>` : ''}
         </div>
       </div>`;
     } catch (err) {
