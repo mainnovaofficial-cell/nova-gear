@@ -206,19 +206,37 @@ const Dashboard = {
       const diproses  = monthOrders.filter(o => o.status === 'Diproses');
       const diprosesHariIni = diproses.filter(o => (o.created_at || '').slice(0, 10) === today);
 
-      // Omzet, Net Diterima & HPP diambil dari income_releases (persis logic Laba Rugi —
-      // "Harga Asli Produk" = sum(gross_amount) tanpa dikurangi diskon dulu), bukan dari
-      // orders.gross_revenue/net_revenue — supaya Dashboard & Laba Rugi selalu sinkron.
-      // Ditambah pesanan Manual/Offline bulan ini (order_date), yang gross = net penuh
-      // karena tidak ada potongan platform (lihat isManualLunas di atas).
-      const relList     = allReleases.filter(r => inRange(r.release_date));
-      const manualMonth = manualAll.filter(o => inRange(o.order_date));
-      const manualGrossMonth = manualMonth.reduce((s, o) => s + manualAmount(o), 0);
-      const omzet     = sum(relList, 'gross_amount') + manualGrossMonth;
-      const netRev    = sum(relList, 'net_amount')   + manualGrossMonth;
+      // Omzet: LANGSUNG dari tabel orders, berbasis order_date (kapan pesanan dibuat) —
+      // BUKAN release_date/income_releases (kapan dana Shopee cair). release_date bisa
+      // beda bulan dari order_date, sehingga pesanan bulan lalu yang baru cair bulan ini
+      // dulu ikut kehitung sebagai omzet bulan ini. Semua status KECUALI 'Batal' dihitung
+      // (Diproses/Gagal Kirim/Dikembalikan/Selesai/Dibayar tetap masuk — cuma Batal yang
+      // dibuang, sesuai definisi "omzet kotor").
+      const omzetOrders = all.filter(o => inRange((o.order_date || '').slice(0, 10)) && o.status !== 'Batal');
+      const omzetLineAmount = (o) => (+o.selling_price || 0) * (+o.qty || 1);
+      const omzet = omzetOrders.reduce((s, o) => s + omzetLineAmount(o), 0);
+
+      // Net Diterima & Potongan Shopee: ikut berbasis order_date juga, supaya konsisten
+      // dengan Omzet. Untuk pesanan Shopee (source ≠ 'offline'), net riil per pesanan
+      // hanya diketahui dari income_releases (net_amount) — dicocokkan via order_no
+      // (BUKAN difilter release_date), sehingga tetap dilekatkan ke bulan order_date-nya.
+      // Pesanan yang dana-nya belum cair (belum ada baris income_releases utk order_no
+      // itu) belum ikut Net Diterima — otomatis nambah begitu Import Income berikutnya
+      // jalan dan halaman ini di-refresh. Pesanan Manual/Offline: Net = Gross penuh
+      // (tidak ada potongan platform, lihat isManualLunas di atas).
+      const shopeeOrderNos = new Set(
+        omzetOrders.filter(o => o.source !== 'offline' && o.order_no).map(o => o.order_no)
+      );
+      const matchedReleases  = allReleases.filter(r => shopeeOrderNos.has(r.order_no));
+      const manualMonth      = omzetOrders.filter(o => o.source === 'offline');
+      const manualGrossMonth = manualMonth.reduce((s, o) => s + omzetLineAmount(o), 0);
+      const netRev    = sum(matchedReleases, 'net_amount') + manualGrossMonth;
       const potShopee = omzet - netRev;
 
-      const totalHPP = hppFromReleases(relList);
+      // HPP = qty pesanan (Selesai/Diproses) yang order_no-nya match matchedReleases ×
+      // HPP terbaru per SKU — matchedReleases di atas sudah berbasis order_date, jadi
+      // HPP & Laba Bersih otomatis ikut konsisten.
+      const totalHPP = hppFromReleases(matchedReleases);
 
       const adsMonth       = (adsData   || []).filter(a => inRange(a.ad_date));
       const opMonth        = (opData    || []).filter(o => inRange(o.op_date));
@@ -231,22 +249,30 @@ const Dashboard = {
       const scans     = (scanToday || []).filter(s => !s.is_cancelled);
       const returnRate = selesai.length > 0 ? (retur.length / selesai.length * 100).toFixed(1) : '0.0';
 
-      // Tren omzet harian untuk bulan yang dipilih — sumbernya income_releases (release_date)
-      // + pesanan Manual/Offline (order_date), sama seperti kartu Omzet/Net Diterima di atas.
+      // Tren omzet harian untuk bulan yang dipilih — berbasis order_date, sama seperti
+      // kartu Omzet/Net Diterima di atas. Omzet: langsung dari tiap baris omzetOrders.
+      // Net: pesanan Manual = gross (langsung di loop yang sama); pesanan Shopee = net_amount
+      // dari matchedReleases, ditambahkan SEKALI per order_no (bukan per baris SKU) supaya
+      // tidak dobel-hitung kalau satu order_no punya beberapa baris.
       const dailyMap = {};
-      relList.forEach(r => {
-        const d = (r.release_date || '').slice(0, 10);
-        if (!d) return;
-        if (!dailyMap[d]) dailyMap[d] = { omzet: 0, net: 0 };
-        dailyMap[d].omzet += +r.gross_amount || 0;
-        dailyMap[d].net   += +r.net_amount   || 0;
-      });
-      manualMonth.forEach(o => {
+      omzetOrders.forEach(o => {
         const d = (o.order_date || '').slice(0, 10);
         if (!d) return;
         if (!dailyMap[d]) dailyMap[d] = { omzet: 0, net: 0 };
-        dailyMap[d].omzet += manualAmount(o);
-        dailyMap[d].net   += manualAmount(o);
+        const amt = omzetLineAmount(o);
+        dailyMap[d].omzet += amt;
+        if (o.source === 'offline') dailyMap[d].net += amt;
+      });
+      const orderDateByNo = {};
+      omzetOrders.forEach(o => {
+        if (o.source === 'offline' || !o.order_no) return;
+        if (!(o.order_no in orderDateByNo)) orderDateByNo[o.order_no] = (o.order_date || '').slice(0, 10);
+      });
+      matchedReleases.forEach(r => {
+        const d = orderDateByNo[r.order_no];
+        if (!d) return;
+        if (!dailyMap[d]) dailyMap[d] = { omzet: 0, net: 0 };
+        dailyMap[d].net += +r.net_amount || 0;
       });
       const daysInMonth = new Date(tahun, bulan, 0).getDate();
       const lastDay     = (tahun === new Date().getFullYear() && bulan === new Date().getMonth() + 1)
