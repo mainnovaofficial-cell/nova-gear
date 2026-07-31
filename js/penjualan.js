@@ -1420,11 +1420,21 @@ const Penjualan = {
         const colOrderNo   = findColIdx('no. pesanan', 'order no');
         const colViewBy    = findColIdx('lihat berdasarkan', 'view by');
         const colRelease   = findColIdx('tanggal dana dilepaskan', 'dana dilepaskan');
-        const colGross     = findColIdx('harga asli produk');
-        const colDiscount  = findColIdx('total diskon produk', 'diskon produk');
-        const colVoucher   = findColIdx('voucher disponsori penjual', 'voucher ditanggung penjual', 'voucher penjual', 'seller voucher');
+        const colGross     = findColIdx('harga produk', 'harga asli produk');
+        const colDiscount  = findColIdx('diskon produk dari shopee', 'total diskon produk', 'diskon produk');
+        const colVoucherA  = findColIdx('voucher disponsor oleh penjual', 'voucher disponsori penjual', 'voucher ditanggung penjual', 'seller voucher');
+        const colVoucherB  = findColIdx('voucher co-fund disponsor oleh penjual', 'voucher co-fund disponsori penjual');
         const colNet       = findColIdx('total penghasilan', 'total income', 'net income');
         const orderNoIdx   = colOrderNo !== -1 ? colOrderNo : 1; // fallback format lama: kolom B
+
+        // Format "Penghasilan" (52 kolom, verified manual terhadap sheet Summary) TIDAK
+        // punya kolom net per pesanan langsung — nilai bersih = jumlah SEMUA kolom
+        // finansial dari "Harga Produk" s/d kolom tepat sebelum "Username (Pembeli)".
+        // Rentang ini diambil BY POSITION (bukan nama), karena dua kolom di dalamnya
+        // ("Biaya Gratis Ongkir XTRA - Ukuran Biasa (Kategori D)") punya nama identik
+        // dan tidak bisa dibedakan lewat pencarian nama.
+        const colUsername = findColIdx('username (pembeli)', 'username pembeli');
+        const sumEndIdx    = colUsername !== -1 ? colUsername - 1 : -1;
 
         for (let i = headerRowIdx + 1; i < rows.length; i++) { // data mulai tepat setelah baris header
           const row = rows[i];
@@ -1442,11 +1452,22 @@ const Penjualan = {
           if (!orderNo) continue;
           const gross   = colGross    !== -1 ? this._toNum(row[colGross])    : 0;
           const disc    = colDiscount !== -1 ? this._toNum(row[colDiscount]) : 0;
-          const voucher = colVoucher  !== -1 ? this._toNum(row[colVoucher])  : 0;
-          // Net Diterima sebenarnya = kolom "Total Penghasilan" Shopee (sudah final
-          // setelah semua potongan), bukan dihitung manual dari gross+diskon+voucher
-          // (data Shopee bisa punya komponen potongan lain di luar diskon/voucher).
-          const net = colNet !== -1 ? this._toNum(row[colNet]) : (gross + disc + voucher);
+          const voucher = (colVoucherA !== -1 ? this._toNum(row[colVoucherA]) : 0) +
+                          (colVoucherB !== -1 ? this._toNum(row[colVoucherB]) : 0);
+
+          let net;
+          if (colNet !== -1) {
+            // Format lama (sheet "Income"): ada kolom total penghasilan langsung.
+            net = this._toNum(row[colNet]);
+          } else if (colGross !== -1 && sumEndIdx !== -1 && sumEndIdx >= colGross) {
+            // Format "Penghasilan": jumlahkan seluruh kolom finansial by-position.
+            net = 0;
+            for (let c = colGross; c <= sumEndIdx; c++) net += this._toNum(row[c]);
+          } else {
+            // Fallback terakhir kalau kedua deteksi di atas gagal total.
+            net = gross + disc + voucher;
+          }
+
           releases.push({
             order_no:       orderNo,
             release_date:   colRelease !== -1 ? this._toDate(row[colRelease]) : null,
@@ -1457,6 +1478,72 @@ const Penjualan = {
           });
         }
       }
+
+      /* ── 2. Sheet "Summary"/"Ringkasan" → income_summary (seperti sebelumnya) ── */
+      const summarySheetName = wb.SheetNames.find(n => /summary|ringkasan/i.test(n)) || wb.SheetNames[0];
+      const wsSummary  = wb.Sheets[summarySheetName];
+      const rawRows    = XLSX.utils.sheet_to_json(wsSummary, { header: 1, raw: false, defval: '' });
+
+      // Normalisasi label: rapikan spasi ganda/non-breaking-space supaya pencocokan substring stabil
+      const normLabel = s => String(s || '').replace(/ /g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+
+      // Baris ringkasan/total Shopee sering memakai sel label gabungan (merged) yang lebih
+      // lebar, sehingga nilai angkanya tidak selalu persis di kolom sebelah label — bisa
+      // beberapa kolom setelahnya. Maka: ambil label = sel pertama yang tidak kosong,
+      // value = sel angka PALING KANAN di baris yang sama (bukan cuma kolom i+1).
+      const valMap = {};
+      for (const row of rawRows) {
+        if (!row || !row.length) continue;
+        let labelIdx = -1;
+        for (let i = 0; i < row.length; i++) {
+          if (String(row[i] ?? '').trim()) { labelIdx = i; break; }
+        }
+        if (labelIdx === -1) continue;
+        const rawLabel = String(row[labelIdx]).trim();
+        if (!rawLabel || /^[\d.,\-]+$/.test(rawLabel)) continue; // baris diawali angka murni → bukan label
+
+        let value = null;
+        for (let i = row.length - 1; i > labelIdx; i--) {
+          const cell = String(row[i] ?? '').trim();
+          if (cell && /\d/.test(cell)) { value = cell; break; }
+        }
+        if (value !== null) valMap[normLabel(rawLabel)] = value;
+      }
+
+      const findVal = (...terms) => {
+        for (const term of terms) {
+          const t = normLabel(term);
+          for (const [label, value] of Object.entries(valMap)) {
+            if (label.includes(t)) return this._toNum(value);
+          }
+        }
+        return 0;
+      };
+
+      const record = {
+        bulan, tahun,
+        total_pendapatan:     findVal('total pendapatan', 'total penghasilan', 'total revenue', 'pendapatan kotor', 'penghasilan kotor'),
+        voucher_penjual:      findVal('voucher penjual', 'seller voucher'),
+        biaya_komisi_ams:     findVal('komisi ams', 'ams commission', 'biaya komisi'),
+        biaya_administrasi:   findVal('biaya administrasi', 'admin fee', 'administration fee'),
+        biaya_layanan:        findVal('biaya layanan', 'service fee', 'layanan'),
+        biaya_proses_pesanan: findVal('biaya proses pesanan', 'processing fee', 'proses pesanan'),
+        premi:                findVal('premi', 'premium'),
+        total_dilepas:        findVal('total yang dilepas', 'total dilepaskan', 'dana yang dilepaskan', 'total released', 'total dilepas'),
+      };
+
+      prog.textContent = 'Menyimpan ringkasan ke database...';
+      const { error } = await App.db().from('income_summary').upsert(record, { onConflict: 'bulan,tahun' });
+      if (error) throw error;
+
+      // Cross-check: total net_amount hasil parsing per-pesanan HARUS kira-kira sama
+      // dengan "Total yang Dilepas" di sheet Summary (cara verifikasi manual yang
+      // dipakai untuk memastikan rumus parsing ini benar). Kalau selisihnya jauh,
+      // kemungkinan besar format sheet berubah lagi dan parsing salah baca kolom —
+      // tampilkan peringatan alih-alih diam-diam menyimpan angka yang salah.
+      const netComputedTotal = releases.reduce((s, r) => s + (+r.net_amount || 0), 0);
+      const netCheckDiff     = record.total_dilepas ? Math.abs(netComputedTotal - record.total_dilepas) : 0;
+      const netCheckMismatch = releases.length > 0 && record.total_dilepas > 0 && netCheckDiff > 1000;
 
       let releasesSaved  = 0;
       let ordersMatched  = 0;
@@ -1518,63 +1605,6 @@ const Penjualan = {
         }
       }
 
-      /* ── 2. Sheet "Summary"/"Ringkasan" → income_summary (seperti sebelumnya) ── */
-      const summarySheetName = wb.SheetNames.find(n => /summary|ringkasan/i.test(n)) || wb.SheetNames[0];
-      const wsSummary  = wb.Sheets[summarySheetName];
-      const rawRows    = XLSX.utils.sheet_to_json(wsSummary, { header: 1, raw: false, defval: '' });
-
-      // Normalisasi label: rapikan spasi ganda/non-breaking-space supaya pencocokan substring stabil
-      const normLabel = s => String(s || '').replace(/ /g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
-
-      // Baris ringkasan/total Shopee sering memakai sel label gabungan (merged) yang lebih
-      // lebar, sehingga nilai angkanya tidak selalu persis di kolom sebelah label — bisa
-      // beberapa kolom setelahnya. Maka: ambil label = sel pertama yang tidak kosong,
-      // value = sel angka PALING KANAN di baris yang sama (bukan cuma kolom i+1).
-      const valMap = {};
-      for (const row of rawRows) {
-        if (!row || !row.length) continue;
-        let labelIdx = -1;
-        for (let i = 0; i < row.length; i++) {
-          if (String(row[i] ?? '').trim()) { labelIdx = i; break; }
-        }
-        if (labelIdx === -1) continue;
-        const rawLabel = String(row[labelIdx]).trim();
-        if (!rawLabel || /^[\d.,\-]+$/.test(rawLabel)) continue; // baris diawali angka murni → bukan label
-
-        let value = null;
-        for (let i = row.length - 1; i > labelIdx; i--) {
-          const cell = String(row[i] ?? '').trim();
-          if (cell && /\d/.test(cell)) { value = cell; break; }
-        }
-        if (value !== null) valMap[normLabel(rawLabel)] = value;
-      }
-
-      const findVal = (...terms) => {
-        for (const term of terms) {
-          const t = normLabel(term);
-          for (const [label, value] of Object.entries(valMap)) {
-            if (label.includes(t)) return this._toNum(value);
-          }
-        }
-        return 0;
-      };
-
-      const record = {
-        bulan, tahun,
-        total_pendapatan:     findVal('total pendapatan', 'total penghasilan', 'total revenue', 'pendapatan kotor', 'penghasilan kotor'),
-        voucher_penjual:      findVal('voucher penjual', 'seller voucher'),
-        biaya_komisi_ams:     findVal('komisi ams', 'ams commission', 'biaya komisi'),
-        biaya_administrasi:   findVal('biaya administrasi', 'admin fee', 'administration fee'),
-        biaya_layanan:        findVal('biaya layanan', 'service fee', 'layanan'),
-        biaya_proses_pesanan: findVal('biaya proses pesanan', 'processing fee', 'proses pesanan'),
-        premi:                findVal('premi', 'premium'),
-        total_dilepas:        findVal('total yang dilepas', 'total dilepaskan', 'dana yang dilepaskan', 'total released', 'total dilepas'),
-      };
-
-      prog.textContent = 'Menyimpan ringkasan ke database...';
-      const { error } = await App.db().from('income_summary').upsert(record, { onConflict: 'bulan,tahun' });
-      if (error) throw error;
-
       const bulanNames = ['','Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
       res.innerHTML = `
         <div class="space-y-1">
@@ -1587,6 +1617,13 @@ const Penjualan = {
             <p class="${ordersNotFound ? 'text-orange-600' : 'text-gray-700'}">Pesanan tidak ditemukan di database: <strong>${ordersNotFound}</strong> pesanan</p>
           </div>` : `
           <p class="text-xs text-orange-600 mt-1">Sheet "Income"/"Penghasilan" (atau kolom "No. Pesanan") tidak ditemukan di file ini — detail per pesanan dilewati, hanya ringkasan Summary yang disimpan.</p>`}
+          ${netCheckMismatch ? `
+          <div class="mt-2 p-2 rounded bg-red-50 border border-red-200 text-xs text-red-700">
+            <p class="font-semibold">⚠ Peringatan: total net per pesanan tidak cocok dengan Summary</p>
+            <p>Total dihitung dari detail per pesanan: <strong>${App.formatRupiah(netComputedTotal)}</strong></p>
+            <p>Total yang Dilepas (sheet Summary): <strong>${App.formatRupiah(record.total_dilepas)}</strong></p>
+            <p>Selisih: <strong>${App.formatRupiah(netCheckDiff)}</strong> — kemungkinan format sheet berubah dan kolom terbaca salah. Cek data sebelum dipakai.</p>
+          </div>` : ''}
           <div class="mt-2 space-y-0.5 text-xs text-gray-700 border-t border-gray-100 pt-2">
             <p>Total Pendapatan: <strong>${App.formatRupiah(record.total_pendapatan)}</strong></p>
             <p>Voucher Penjual: <strong>${App.formatRupiah(record.voucher_penjual)}</strong></p>
