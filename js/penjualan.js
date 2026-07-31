@@ -1313,14 +1313,14 @@ const Penjualan = {
       size: 'max-w-xl',
       body: `
         <p class="text-sm text-gray-600 mb-3">Upload file <strong>.xlsx</strong> penghasilan Shopee.
-        Detail per pesanan diambil dari sheet <strong>Income</strong>, ringkasan dari sheet <strong>Summary / Ringkasan</strong>.</p>
+        Detail per pesanan diambil dari sheet <strong>Income</strong> atau <strong>Penghasilan</strong> (tergantung bahasa antarmuka Shopee saat export), ringkasan dari sheet <strong>Summary / Ringkasan</strong>.</p>
         <div class="bg-green-50 border border-green-100 rounded-lg p-3 text-xs text-green-800 mb-4">
-          <p class="font-semibold mb-1">Sheet Income (per No. Pesanan):</p>
+          <p class="font-semibold mb-1">Sheet Income/Penghasilan (per No. Pesanan):</p>
           <p>No. Pesanan · Tanggal Dana Dilepaskan · Harga Asli Produk · Total Diskon Produk · Voucher disponsori Penjual</p>
           <p class="font-semibold mt-2 mb-1">Sheet Summary (ringkasan bulanan):</p>
           <p>Total Pendapatan · Voucher Penjual · Biaya Komisi AMS · Biaya Administrasi</p>
           <p>Biaya Layanan · Biaya Proses Pesanan · Premi · Total yang Dilepas</p>
-          <p class="mt-2 text-green-700">Pesanan yang ditemukan di sheet Income ditandai <strong>sudah dicocokkan</strong> (kolom internal), status pesanan (Diproses/Selesai/dst) tidak diubah.</p>
+          <p class="mt-2 text-green-700">Pesanan yang ditemukan di sheet Income/Penghasilan ditandai <strong>sudah dicocokkan</strong> (kolom internal), status pesanan (Diproses/Selesai/dst) tidak diubah.</p>
         </div>
         <div class="grid grid-cols-2 gap-3 mb-4">
           <div><label class="label">Bulan</label>
@@ -1365,15 +1365,45 @@ const Penjualan = {
       const buf = await file.arrayBuffer();
       const wb  = XLSX.read(buf, { type: 'array', cellDates: true });
 
-      /* ── 1. Sheet "Income" → income_releases (per No. Pesanan) ── */
-      const incomeSheetName = wb.SheetNames.find(n => /^income$/i.test(n.trim())) ||
-                               wb.SheetNames.find(n => /income/i.test(n));
-      const releases = [];
+      /* ── 1. Sheet "Income"/"Penghasilan" → income_releases (per No. Pesanan) ── */
+      // Nama sheet detail-per-pesanan berubah mengikuti bahasa antarmuka Shopee
+      // ("Income" versi EN, "Penghasilan" versi ID). Cari keduanya dulu (case-insensitive);
+      // kalau tidak ada sheet dengan nama itu, cari otomatis sheet mana pun yang
+      // headernya memuat kolom "No. Pesanan" / "Order No.".
+      const findHeaderRowIdx = rows => {
+        const limit = Math.min(rows.length, 10);
+        for (let i = 0; i < limit; i++) {
+          const row = rows[i] || [];
+          if (row.some(h => { const n = String(h || '').trim().toLowerCase(); return n.includes('no. pesanan') || n.includes('order no'); })) {
+            return i;
+          }
+        }
+        return -1;
+      };
+
+      let incomeSheetName = wb.SheetNames.find(n => /^(income|penghasilan)$/i.test(n.trim())) ||
+                             wb.SheetNames.find(n => /income|penghasilan/i.test(n));
+      let incomeRows = null, headerRowIdx = -1;
 
       if (incomeSheetName) {
-        const wsIncome = wb.Sheets[incomeSheetName];
-        const rows      = XLSX.utils.sheet_to_json(wsIncome, { header: 1, raw: false, defval: '' });
-        const headerRow = rows[5] || []; // baris 6 (1-based) = index 5
+        incomeRows   = XLSX.utils.sheet_to_json(wb.Sheets[incomeSheetName], { header: 1, raw: false, defval: '' });
+        headerRowIdx = findHeaderRowIdx(incomeRows);
+        if (headerRowIdx === -1) headerRowIdx = 5; // fallback format lama: header di baris 6 (index 5)
+      } else {
+        // Tidak ada sheet bernama Income/Penghasilan — cari otomatis sheet mana pun
+        // yang headernya memuat kolom "No. Pesanan".
+        for (const name of wb.SheetNames) {
+          const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: false, defval: '' });
+          const idx  = findHeaderRowIdx(rows);
+          if (idx !== -1) { incomeSheetName = name; incomeRows = rows; headerRowIdx = idx; break; }
+        }
+      }
+
+      const releases = [];
+
+      if (incomeSheetName && incomeRows) {
+        const rows      = incomeRows;
+        const headerRow = rows[headerRowIdx] || [];
 
         // Normalisasi header: rapikan non-breaking-space/spasi ganda supaya pencocokan substring stabil
         // (header gabungan kolom kadang menyisipkan karakter spasi non-standar dari export Shopee).
@@ -1387,17 +1417,28 @@ const Penjualan = {
           return -1;
         };
 
-        const COL_ORDER_NO = 1; // kolom B
+        const colOrderNo   = findColIdx('no. pesanan', 'order no');
+        const colViewBy    = findColIdx('lihat berdasarkan', 'view by');
         const colRelease   = findColIdx('tanggal dana dilepaskan', 'dana dilepaskan');
         const colGross     = findColIdx('harga asli produk');
         const colDiscount  = findColIdx('total diskon produk', 'diskon produk');
         const colVoucher   = findColIdx('voucher disponsori penjual', 'voucher ditanggung penjual', 'voucher penjual', 'seller voucher');
         const colNet       = findColIdx('total penghasilan', 'total income', 'net income');
+        const orderNoIdx   = colOrderNo !== -1 ? colOrderNo : 1; // fallback format lama: kolom B
 
-        for (let i = 6; i < rows.length; i++) { // data mulai baris 7 (index 6)
+        for (let i = headerRowIdx + 1; i < rows.length; i++) { // data mulai tepat setelah baris header
           const row = rows[i];
           if (!row) continue;
-          const orderNo = String(row[COL_ORDER_NO] || '').trim();
+
+          // Kolom "Lihat berdasarkan" bernilai "Order" atau "Sku" — tiap pesanan bisa
+          // muncul lebih dari sekali (baris ringkasan Order + baris per Sku). Kalau
+          // kolom ini ada, proses baris "Order" saja supaya tidak dobel hitung.
+          if (colViewBy !== -1) {
+            const viewBy = String(row[colViewBy] || '').trim().toLowerCase();
+            if (viewBy && viewBy !== 'order') continue;
+          }
+
+          const orderNo = String(row[orderNoIdx] || '').trim();
           if (!orderNo) continue;
           const gross   = colGross    !== -1 ? this._toNum(row[colGross])    : 0;
           const disc    = colDiscount !== -1 ? this._toNum(row[colDiscount]) : 0;
@@ -1417,8 +1458,9 @@ const Penjualan = {
         }
       }
 
-      let releasesSaved = 0;
-      let ordersMatched = 0;
+      let releasesSaved  = 0;
+      let ordersMatched  = 0;
+      let ordersNotFound = 0;
       if (releases.length) {
         prog.textContent = `Menyimpan ${releases.length} data Income...`;
         const SAVE_BATCH = 500;
@@ -1458,6 +1500,9 @@ const Penjualan = {
         const matchedIds = allOrders
           .filter(o => releaseNoSet.has(normOrderNo(o.order_no)))
           .map(o => o.id);
+
+        const dbOrderNoSet = new Set(allOrders.map(o => normOrderNo(o.order_no)));
+        ordersNotFound = [...releaseNoSet].filter(no => !dbOrderNoSet.has(no)).length;
 
         prog.textContent = 'Menandai pesanan yang cocok dengan Income...';
         const nowIso = new Date().toISOString();
@@ -1536,10 +1581,12 @@ const Penjualan = {
           <p class="font-semibold text-green-700">Income ${bulanNames[bulan]} ${tahun} berhasil disimpan!</p>
           ${releasesSaved ? `
           <div class="mt-2 text-xs text-gray-700 border-t border-gray-100 pt-2 space-y-0.5">
+            <p>Sheet detail terbaca: <strong>${incomeSheetName}</strong></p>
             <p>Data Income per pesanan: <strong>${releasesSaved}</strong> baris</p>
-            <p>Pesanan dicocokkan dengan Income: <strong>${ordersMatched}</strong> pesanan</p>
+            <p class="text-green-700">Pesanan dicocokkan dengan Income: <strong>${ordersMatched}</strong> pesanan</p>
+            <p class="${ordersNotFound ? 'text-orange-600' : 'text-gray-700'}">Pesanan tidak ditemukan di database: <strong>${ordersNotFound}</strong> pesanan</p>
           </div>` : `
-          <p class="text-xs text-orange-600 mt-1">Sheet "Income" tidak ditemukan — detail per pesanan dilewati, hanya ringkasan Summary yang disimpan.</p>`}
+          <p class="text-xs text-orange-600 mt-1">Sheet "Income"/"Penghasilan" (atau kolom "No. Pesanan") tidak ditemukan di file ini — detail per pesanan dilewati, hanya ringkasan Summary yang disimpan.</p>`}
           <div class="mt-2 space-y-0.5 text-xs text-gray-700 border-t border-gray-100 pt-2">
             <p>Total Pendapatan: <strong>${App.formatRupiah(record.total_pendapatan)}</strong></p>
             <p>Voucher Penjual: <strong>${App.formatRupiah(record.voucher_penjual)}</strong></p>
