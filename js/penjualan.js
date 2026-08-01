@@ -1189,18 +1189,20 @@ const Penjualan = {
       const allNos = [...new Set(records.map(r => r.order_no))];
       const existingMap     = new Map(); // "order_no||sku" → id (exact match)
       const currentActionMap = new Map(); // "order_no||sku" → stok_action saat ini di DB
-      const byOrderNo        = new Map(); // order_no → [{ id, sku, stok_action }]
+      const currentStatusMap = new Map(); // "order_no||sku" → status saat ini di DB
+      const byOrderNo        = new Map(); // order_no → [{ id, sku, stok_action, status }]
       const BATCH = 100;
       for (let i = 0; i < allNos.length; i += BATCH) {
         const chunk = allNos.slice(i, i + BATCH);
-        const { data, error } = await App.db().from('orders').select('id, order_no, sku, stok_action').in('order_no', chunk);
+        const { data, error } = await App.db().from('orders').select('id, order_no, sku, stok_action, status').in('order_no', chunk);
         if (error) throw error;
         (data || []).forEach(o => {
           const key = `${o.order_no}||${o.sku || ''}`;
           existingMap.set(key, o.id);
           currentActionMap.set(key, o.stok_action);
+          currentStatusMap.set(key, o.status);
           if (!byOrderNo.has(o.order_no)) byOrderNo.set(o.order_no, []);
-          byOrderNo.get(o.order_no).push({ id: o.id, sku: o.sku, stok_action: o.stok_action });
+          byOrderNo.get(o.order_no).push({ id: o.id, sku: o.sku, stok_action: o.stok_action, status: o.status });
         });
       }
 
@@ -1209,6 +1211,18 @@ const Penjualan = {
       // re-import file retur — kalau tidak, konfirmasi manual yang sudah dilakukan akan hilang
       // dan stok_action balik lagi jadi "menunggu_barang_kembali".
       const FINAL_STOK_ACTIONS = ['barang_kembali', 'sudah_keluar_tidak_balik'];
+
+      // Pesanan yang statusnya SUDAH 'Selesai' juga tidak boleh ditimpa balik ke Retur/Gagal
+      // Kirim/menunggu_barang_kembali, apapun isi filenya — status 'Selesai' bisa dicapai bukan
+      // cuma lewat tombol konfirmasi di atas, tapi juga lewat form Edit manual (mis. retur
+      // dibatalkan pembeli: barang tetap di pembeli, dana cair normal, tapi file export Shopee
+      // tidak selalu mencerminkan itu dengan bersih). Kalau hanya mengandalkan stok_action,
+      // resolusi manual lewat Edit (yang men-set stok_action jadi 'keluar' via
+      // _determineStokAction) tidak ikut terlindungi dan balik di-reset oleh import berikutnya.
+      // Ini tidak menghalangi retur yang benar-benar baru: retur baru selalu datang untuk
+      // pesanan yang statusnya belum 'Selesai' (mis. masih 'Diproses'/'Retur'), jadi tidak kena
+      // proteksi ini.
+      const isProtectedFinal = m => FINAL_STOK_ACTIONS.includes(m.stok_action) || m.status === 'Selesai';
 
       // ── Update pesanan ada / Insert pesanan baru ──
       let nUpdate = 0, nInsert = 0, nBatal = 0, nGagal = 0, nRetur = 0, nReview = 0, nSkipFinal = 0, nReturBatal = 0;
@@ -1225,7 +1239,7 @@ const Penjualan = {
         // Cocokkan order_no+sku persis dulu; kalau tidak ketemu, fallback ke semua
         // baris yang order_no-nya sama (lihat catatan di atas soal beda istilah SKU).
         const matches = existingMap.has(key)
-          ? [{ id: existingMap.get(key), sku: rec.sku, stok_action: currentActionMap.get(key) }]
+          ? [{ id: existingMap.get(key), sku: rec.sku, stok_action: currentActionMap.get(key), status: currentStatusMap.get(key) }]
           : (byOrderNo.get(rec.order_no) || []);
 
         if (matches.length) {
@@ -1233,7 +1247,7 @@ const Penjualan = {
           // created_at TIDAK disentuh sama sekali supaya pesanan tetap masuk
           // Rekap Harian di tanggal created_at aslinya, bukan tanggal import ini.
           for (const m of matches) {
-            if (FINAL_STOK_ACTIONS.includes(m.stok_action)) {
+            if (isProtectedFinal(m)) {
               nSkipFinal++;
               continue;
             }
@@ -1258,8 +1272,9 @@ const Penjualan = {
           // Tandai sudah ada supaya baris duplikat lain di file (order_no sama) di-update, bukan insert lagi.
           existingMap.set(key, inserted.id);
           currentActionMap.set(key, rec.stok_action);
+          currentStatusMap.set(key, rec.status);
           if (!byOrderNo.has(rec.order_no)) byOrderNo.set(rec.order_no, []);
-          byOrderNo.get(rec.order_no).push({ id: inserted.id, sku: rec.sku, stok_action: rec.stok_action });
+          byOrderNo.get(rec.order_no).push({ id: inserted.id, sku: rec.sku, stok_action: rec.stok_action, status: rec.status });
           nInsert++;
         }
 
@@ -1282,7 +1297,7 @@ const Penjualan = {
             <p>Diperbarui: <strong>${nUpdate}</strong> pesanan &nbsp;·&nbsp; Ditambah baru: <strong>${nInsert}</strong> pesanan</p>
             ${nReview ? `<p class="text-amber-600 font-medium">${nReview} pesanan masuk tab "Perlu Direview" (barang belum kembali ke gudang).</p>` : ''}
             ${nReturBatal ? `<p class="text-gray-500">${nReturBatal} retur dibatalkan pembeli — dikembalikan ke status Selesai, tidak masuk Perlu Direview.</p>` : ''}
-            ${nSkipFinal ? `<p class="text-blue-600 font-medium">${nSkipFinal} pesanan dilewati karena sudah dikonfirmasi final (Barang Kembali/Tidak Kembali) — tidak ditimpa.</p>` : ''}
+            ${nSkipFinal ? `<p class="text-blue-600 font-medium">${nSkipFinal} pesanan dilewati karena sudah dikonfirmasi final (Barang Kembali/Tidak Kembali) atau sudah berstatus Selesai — tidak ditimpa.</p>` : ''}
           </div>
         </div>`;
       res.className = 'mt-3 p-3 rounded-lg bg-green-50 border border-green-100 text-sm';
