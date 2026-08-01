@@ -56,11 +56,11 @@ const Dashboard = {
       ] = await Promise.all([
         db.from('orders').select('order_no,status,created_at,order_date,qty,sku,source,selling_price,metode_bayar'),
         db.from('hpp_items').select('sku,cost_per_unit,total_cost,created_at').order('created_at', { ascending: false }),
-        db.from('ads').select('cost,ad_date,sumber_bayar'),
+        db.from('ads').select('cost,ad_date,sumber_bayar,sudah_potong_income'),
         db.from('operational').select('cost,op_date'),
         db.from('scan_logs').select('id,expedition,is_cancelled,scan_date').eq('scan_date', App.todayISO()),
         db.from('income_releases').select('order_no,gross_amount,discount,voucher_seller,net_amount,release_date'),
-        db.from('ads_expenses').select('biaya,month,year,sumber_bayar'),
+        db.from('ads_expenses').select('biaya,month,year,sumber_bayar,sudah_potong_income'),
         db.from('kas_pribadi').select('tipe,jumlah'),
         db.from('hutang_pembayaran').select('sumber_kas_bisnis'),
         db.from('penarikan_saldo').select('jumlah'),
@@ -180,8 +180,15 @@ const Dashboard = {
       // Iklan yang sumber_bayar-nya "Saldo BCA"/"Saldo Shopee" — lihat catatan di atas.
       const totalAdsBcaAllTime = sum((adsData || []).filter(a => a.sumber_bayar === 'Saldo BCA'), 'cost')
         + sum((adsImport || []).filter(a => a.sumber_bayar === 'Saldo BCA'), 'biaya');
-      const totalAdsShopeeAllTime = sum((adsData || []).filter(a => a.sumber_bayar === 'Saldo Shopee'), 'cost')
-        + sum((adsImport || []).filter(a => a.sumber_bayar === 'Saldo Shopee'), 'biaya');
+      // Kecualikan baris yang sudah_potong_income = true — biaya iklan (mis. Isi Ulang Saldo
+      // Iklan Otomatis) yang nilainya SUDAH otomatis terpotong dari net_amount per pesanan di
+      // Income/Penghasilan, sehingga sudah ikut mengurangi netRevAllTime di atas. Kalau ikut
+      // dikurangkan lagi di sini, Saldo Shopee dobel potong. Biaya tetap dicatat penuh di Laba
+      // Rugi (labarugi.js totalAds tidak difilter sudah_potong_income) — flag ini HANYA
+      // mempengaruhi kas Saldo Shopee di sini. Lihat js/iklan.js (checkbox "Sudah otomatis
+      // terpotong lewat Income Shopee").
+      const totalAdsShopeeAllTime = sum((adsData || []).filter(a => a.sumber_bayar === 'Saldo Shopee' && !a.sudah_potong_income), 'cost')
+        + sum((adsImport || []).filter(a => a.sumber_bayar === 'Saldo Shopee' && !a.sudah_potong_income), 'biaya');
 
       const saldoShopee = modalAwalShopee + netRevAllTime - totalPenarikanAllTime
         + totalPenyesuaianMasukAllTime - totalPenyesuaianKeluarAllTime

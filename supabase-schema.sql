@@ -741,6 +741,27 @@ where o.order_no = first_row.order_no
   and o.metode_bayar is distinct from first_row.metode_bayar;
 
 -- ═══════════════════════════════════════════════════════
+--  MIGRASI v19 — Iklan Saldo Shopee yang sudah tercermin di Income
+--  (jangan kurangi Saldo Shopee dua kali)
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- Sebagian biaya iklan bersumber "Saldo Shopee" (mis. Isi Ulang Saldo Iklan
+-- Otomatis) sebenarnya SUDAH otomatis terpotong dari net_amount per pesanan
+-- di file Income/Penghasilan Shopee — jadi sudah ikut mengurangi netRevAllTime
+-- yang membentuk Saldo Shopee. Sebelum kolom ini ada, MEMBERI TAHU sistem
+-- "sumber_bayar = Saldo Shopee" untuk entri semacam ini membuat Saldo Shopee
+-- dikurangi LAGI (dobel potong) lewat totalAdsShopeeAllTime di js/dashboard.js.
+-- Kolom ini membiarkan sumber_bayar tetap jujur menyatakan "Saldo Shopee"
+-- (untuk pelaporan/audit), tapi mengecualikan baris tsb dari pengurangan
+-- Saldo Shopee kalau dicentang. Default false menjaga semua data lama
+-- (termasuk yang sudah terlanjur dobel hitung) tidak berubah perilakunya
+-- sampai ditinjau & dicentang manual satu per satu. Lihat js/iklan.js
+-- (checkbox di form Tambah Iklan & Import CSV Iklan) dan js/dashboard.js.
+alter table ads          add column if not exists sudah_potong_income boolean not null default false;
+alter table ads_expenses add column if not exists sudah_potong_income boolean not null default false;
+
+-- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup
 --  Untuk production, gunakan Supabase Auth + RLS policies.
 --  Untuk sementara (anon key): disable RLS di table settings.

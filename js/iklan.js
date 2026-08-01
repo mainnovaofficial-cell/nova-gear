@@ -89,12 +89,19 @@ const Iklan = {
             <input id="imp-ik-tahun" type="number" class="input" value="${now.getFullYear()}" min="2020" max="2035"/>
           </div>
           <div class="col-span-2"><label class="label">Sumber Pembayaran *</label>
-            <select id="imp-ik-sumber" class="input">
+            <select id="imp-ik-sumber" class="input" onchange="Iklan._toggleSudahPotongVisibility('imp-ik-sumber','imp-ik-sudah-potong-wrap')">
               <option>Kartu Kredit</option>
               <option>Saldo BCA</option>
               <option>Saldo Shopee</option>
             </select>
             <p class="text-xs text-gray-400 mt-1">Berlaku untuk semua produk di file ini — sesuaikan dari mana Isi Ulang Saldo Iklan bulan ini didanai.</p>
+          </div>
+          <div id="imp-ik-sudah-potong-wrap" class="col-span-2 hidden bg-amber-50 border border-amber-100 rounded-lg p-3">
+            <label class="flex items-start gap-2 text-sm text-gray-700">
+              <input id="imp-ik-sudah-potong" type="checkbox" class="mt-0.5"/>
+              <span>Sudah otomatis terpotong lewat Income Shopee — jangan kurangi Saldo Shopee lagi</span>
+            </label>
+            <p class="text-xs text-gray-500 mt-1 ml-6">Centang HANYA untuk Isi Ulang Saldo Iklan Otomatis yang nilainya sudah ikut mengurangi net_amount per pesanan di file Income/Penghasilan (biasanya muncul di laporan Saldo Shopee sebagai tipe transaksi "Pembayaran dengan Saldo Penjual"). Biaya tetap dicatat penuh di Laba Rugi — centang ini hanya mencegah Saldo Shopee dikurangi dua kali. JANGAN centang untuk iklan yang benar-benar dibayar terpisah dari Income (mis. top up manual lewat transfer terpisah).</p>
           </div>
         </div>
         <div class="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer
@@ -120,6 +127,8 @@ const Iklan = {
     const bulan  = parseInt(document.getElementById('imp-ik-bulan').value);
     const tahun  = parseInt(document.getElementById('imp-ik-tahun').value);
     const sumber = document.getElementById('imp-ik-sumber').value;
+    // Checkbox hanya tampil (dan cuma relevan) kalau sumber === 'Saldo Shopee' — lihat _toggleSudahPotongVisibility.
+    const sudahPotongIncome = sumber === 'Saldo Shopee' && !!document.getElementById('imp-ik-sudah-potong')?.checked;
 
     prog.textContent = 'Membaca file...';
     prog.classList.remove('hidden');
@@ -186,6 +195,7 @@ const Iklan = {
           omzet_iklan:  colOmzet !== -1 ? this._toNum(row[colOmzet]) : 0,
           acos:         colAcos  !== -1 ? this._toPercent(row[colAcos]) : 0,
           sumber_bayar: sumber,
+          sudah_potong_income: sudahPotongIncome,
         });
       }
 
@@ -222,6 +232,23 @@ const Iklan = {
     const s = String(v ?? '').replace(/[^\d,.\-]/g, '').trim();
     if (!s) return 0;
     return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
+  },
+
+  // Checkbox "sudah terpotong Income" hanya relevan untuk sumber "Saldo Shopee" — potongan
+  // otomatis (mis. Isi Ulang Saldo Iklan) cuma bisa "sudah tercermin di Income" kalau memang
+  // Income yang dimaksud (net_amount per pesanan Shopee) dari dompet yang sama. Tampilkan/
+  // sembunyikan wrap-nya sesuai pilihan Sumber Pembayaran, dan uncheck kalau disembunyikan
+  // supaya tidak submit true secara tidak sengaja saat sumbernya bukan Saldo Shopee.
+  _toggleSudahPotongVisibility(sumberSelectId, wrapId) {
+    const sumberEl = document.getElementById(sumberSelectId);
+    const wrapEl   = document.getElementById(wrapId);
+    if (!sumberEl || !wrapEl) return;
+    const show = sumberEl.value === 'Saldo Shopee';
+    wrapEl.classList.toggle('hidden', !show);
+    if (!show) {
+      const cb = wrapEl.querySelector('input[type="checkbox"]');
+      if (cb) cb.checked = false;
+    }
   },
 
   // ACOS pakai format desimal titik langsung dari Shopee (mis. "25.90%"),
@@ -276,7 +303,7 @@ const Iklan = {
           <tr>
             <td class="max-w-[260px] truncate">${r.product_name}</td>
             <td class="text-right font-semibold text-money">${App.formatRupiah(r.biaya)}</td>
-            <td><span class="badge ${sumberColor[r.sumber_bayar]||sumberColor.default}">${r.sumber_bayar||'Kartu Kredit'}</span></td>
+            <td><span class="badge ${sumberColor[r.sumber_bayar]||sumberColor.default}">${r.sumber_bayar||'Kartu Kredit'}</span>${r.sudah_potong_income ? ` <span class="badge badge-gray" title="Sudah otomatis terpotong lewat Income Shopee — tidak mengurangi Saldo Shopee lagi">✓ di Income</span>` : ''}</td>
             <td class="text-right">${App.formatNumber(r.konversi || 0)}</td>
             <td class="text-right text-money">${App.formatRupiah(r.omzet_iklan)}</td>
             <td class="text-right">${(+r.acos || 0).toFixed(2)}%</td>
@@ -338,7 +365,7 @@ const Iklan = {
             <td><span class="badge ${platformColor[r.platform]||platformColor.default}">${r.platform||'-'}</span></td>
             <td class="max-w-[160px] truncate">${r.campaign_name||'-'}</td>
             <td class="text-right font-semibold text-money">${App.formatRupiah(r.cost)}</td>
-            <td><span class="badge ${sumberColor[r.sumber_bayar]||sumberColor.default}">${r.sumber_bayar||'Kartu Kredit'}</span></td>
+            <td><span class="badge ${sumberColor[r.sumber_bayar]||sumberColor.default}">${r.sumber_bayar||'Kartu Kredit'}</span>${r.sudah_potong_income ? ` <span class="badge badge-gray" title="Sudah otomatis terpotong lewat Income Shopee — tidak mengurangi Saldo Shopee lagi">✓ di Income</span>` : ''}</td>
             <td class="text-right text-gray-500">${App.formatNumber(r.impressions||0)}</td>
             <td class="text-right text-gray-500">${App.formatNumber(r.clicks||0)}</td>
             <td class="text-right">${App.formatNumber(r.orders_count||0)}</td>
@@ -367,13 +394,20 @@ const Iklan = {
         <div class="col-span-2"><label class="label">Nama Kampanye</label><input id="ik-campaign" class="input" placeholder="Opsional"/></div>
         <div><label class="label">Biaya (Rp) *</label><input id="ik-cost" type="number" class="input" placeholder="0"/></div>
         <div><label class="label">Sumber Pembayaran *</label>
-          <select id="ik-sumber" class="input">
+          <select id="ik-sumber" class="input" onchange="Iklan._toggleSudahPotongVisibility('ik-sumber','ik-sudah-potong-wrap')">
             <option>Kartu Kredit</option>
             <option>Saldo BCA</option>
             <option>Saldo Shopee</option>
           </select>
         </div>
         <div class="col-span-2"><label class="label">Catatan</label><input id="ik-notes" class="input" placeholder="Opsional"/></div>
+        <div id="ik-sudah-potong-wrap" class="col-span-2 hidden bg-amber-50 border border-amber-100 rounded-lg p-3">
+          <label class="flex items-start gap-2 text-sm text-gray-700">
+            <input id="ik-sudah-potong" type="checkbox" class="mt-0.5"/>
+            <span>Sudah otomatis terpotong lewat Income Shopee — jangan kurangi Saldo Shopee lagi</span>
+          </label>
+          <p class="text-xs text-gray-500 mt-1 ml-6">Centang HANYA untuk Isi Ulang Saldo Iklan Otomatis yang nilainya sudah ikut mengurangi net_amount per pesanan di file Income/Penghasilan (biasanya muncul di laporan Saldo Shopee sebagai tipe transaksi "Pembayaran dengan Saldo Penjual"). Biaya tetap dicatat penuh di Laba Rugi — centang ini hanya mencegah Saldo Shopee dikurangi dua kali. JANGAN centang untuk iklan yang benar-benar dibayar terpisah dari Income (mis. top up manual lewat transfer terpisah).</p>
+        </div>
       </div>`,
       footer: `<button onclick="App.closeModal()" class="btn-secondary">Batal</button>
                <button onclick="Iklan.save()" class="btn-primary">Simpan</button>`,
@@ -383,12 +417,15 @@ const Iklan = {
   async save() {
     const cost = +document.getElementById('ik-cost').value || 0;
     if (!cost) { App.toast('Biaya wajib diisi.', 'warning'); return; }
+    const sumber = document.getElementById('ik-sumber').value;
     const payload = {
       ad_date:       document.getElementById('ik-date').value,
       platform:      document.getElementById('ik-platform').value,
       campaign_name: document.getElementById('ik-campaign').value.trim() || null,
       cost,
-      sumber_bayar:  document.getElementById('ik-sumber').value,
+      sumber_bayar:  sumber,
+      // Checkbox hanya tampil (dan cuma relevan) kalau sumber === 'Saldo Shopee' — lihat _toggleSudahPotongVisibility.
+      sudah_potong_income: sumber === 'Saldo Shopee' && !!document.getElementById('ik-sudah-potong')?.checked,
       notes:         document.getElementById('ik-notes').value.trim() || null,
     };
     const { error } = await App.db().from('ads').insert(payload);
