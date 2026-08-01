@@ -190,30 +190,42 @@ const Penjualan = {
   // Import Income TIDAK PERNAH mengubah status pesanan (lihat importIncomeFile) — Income hanya
   // mencatat data keuangan dan menandai income_matched_at, status fulfillment tetap apa adanya.
   // Return null berarti baris harus dilewati (mis. Menunggu Pembayaran, Dikembalikan).
+  // Mengembalikan { status, recognized }. `recognized` membedakan "sengaja dilewati karena
+  // memang bukan target import ini" (mis. Menunggu Pembayaran) dari "format status di file
+  // tidak ada aturan yang cocok sama sekali" — dua hal ini perlu dilaporkan beda ke user
+  // (lihat ringkasan "status tidak dikenali" di importPesananFile).
   _mapStatus(shopeeStatus, cancelReason) {
     const s = (shopeeStatus || '').toLowerCase().trim();
     const r = (cancelReason  || '').toLowerCase().trim();
 
-    // Dilewati / skip — tidak diimport
-    if (s.includes('menunggu pembayaran') || s.includes('belum dibayar') || s.includes('dikembalikan')) return null;
+    // Dilewati / skip — tidak diimport, tapi dikenali
+    if (s.includes('menunggu pembayaran') || s.includes('belum dibayar') || s.includes('dikembalikan')) {
+      return { status: null, recognized: true };
+    }
 
     // Gagal Kirim — dicek sebelum Batal karena di Shopee ini sering tampil sebagai "Batal" + alasan
     if (s.includes('gagal kirim') || s.includes('pengiriman gagal') ||
-        r.includes('pengiriman gagal') || r.includes('gagal dikirim')) return 'Gagal Kirim';
+        r.includes('pengiriman gagal') || r.includes('gagal dikirim')) {
+      return { status: 'Gagal Kirim', recognized: true };
+    }
 
     // Batal (selain yang sudah ditangani sebagai Gagal Kirim di atas)
-    if (s.includes('batal')) return 'Batal';
+    if (s.includes('batal')) return { status: 'Batal', recognized: true };
 
     // Selesai — termasuk status panjang seperti
     // "Pesanan diterima, namun Pembeli masih dapat mengajukan pengembalian hingga ..."
-    if (s.includes('selesai') || s.includes('pesanan diterima') || s.includes('diterima pembeli')) return 'Selesai';
+    if (s.includes('selesai') || s.includes('pesanan diterima') || s.includes('diterima pembeli')) {
+      return { status: 'Selesai', recognized: true };
+    }
 
     // Diproses
     if (s.includes('perlu dikirim') || s.includes('sedang dikirim') ||
         s.includes('telah dikirim') || s.includes('dalam pengiriman') ||
-        s === 'diproses') return 'Diproses';
+        s === 'diproses') {
+      return { status: 'Diproses', recognized: true };
+    }
 
-    return null; // status tidak dikenali — lewati
+    return { status: null, recognized: false }; // status tidak dikenali — lewati
   },
 
   // Tentukan dampak stok berdasarkan status internal (bukan status Shopee mentah).
@@ -831,6 +843,10 @@ const Penjualan = {
 
       prog.textContent = `Memproses ${rows.length} baris...`;
 
+      // shopeeStatus mentah → jumlah baris, untuk baris yang formatnya sama sekali tidak
+      // dikenali _mapStatus (bukan yang sengaja dilewati seperti Menunggu Pembayaran).
+      const unrecognizedStatuses = new Map();
+
       // Parse semua baris, petakan ke 4 status internal, lewati status tidak relevan
       const records = rows
         .map(r => {
@@ -839,8 +855,13 @@ const Penjualan = {
           const cancelReturnStatus = col(r, 'Status Pembatalan/Pengembalian', 'Cancellation/Return Status', 'Return Status');
           const returnedQty        = toNum(col(r, 'Returned quantity', 'Jumlah Dikembalikan', 'Returned Qty'));
 
-          let status = this._mapStatus(shopeeStatus, cancelReason);
-          if (!status) return null; // Menunggu Pembayaran, dll → lewati
+          const mapped = this._mapStatus(shopeeStatus, cancelReason);
+          if (!mapped.recognized) {
+            unrecognizedStatuses.set(shopeeStatus, (unrecognizedStatuses.get(shopeeStatus) || 0) + 1);
+            return null;
+          }
+          let status = mapped.status;
+          if (!status) return null; // Menunggu Pembayaran, dll → dikenali, memang sengaja dilewati
 
           // Pesanan "Selesai" yang punya retur aktif → override ke Retur, masuk Perlu Direview
           const isRetur = status === 'Selesai' && cancelReturnStatus && returnedQty > 0;
@@ -874,9 +895,15 @@ const Penjualan = {
         return;
       }
 
-      // ── Fetch existing records (batch 100) — ambil juga status untuk deteksi perubahan
-      const orderNos   = [...new Set(records.map(r => r.order_no))];
-      const existingMap = new Map(); // "order_no||sku" → { status }
+      // ── Fetch existing records (batch 100) — ambil juga status untuk deteksi perubahan.
+      // Key dicocokkan case-insensitive + trim (bukan hanya persis sama), karena SKU yang
+      // sebenarnya sama kadang ditulis beda huruf besar/kecil antara file Shopee dan data
+      // yang sudah tersimpan (mis. "CN-SL263-GREY" vs "CN-SL263-Grey") — tanpa normalisasi
+      // ini, baris tsb dianggap "tidak ditemukan" dan statusnya gagal terupdate.
+      const norm = v => String(v || '').trim().toLowerCase();
+      const orderNos = [...new Set(records.map(r => r.order_no))];
+      const existingByKey   = new Map(); // "order_no||sku" (normalized) → { status }
+      const existingByOrder = new Map(); // order_no (normalized) → [{ sku, status }]
       const BATCH = 100;
       for (let i = 0; i < orderNos.length; i += BATCH) {
         const chunk = orderNos.slice(i, i + BATCH);
@@ -886,31 +913,57 @@ const Penjualan = {
           .select('order_no, sku, status')
           .in('order_no', chunk);
         if (fetchErr) throw new Error(`Gagal cek database: ${fetchErr.message}${fetchErr.details ? ' — ' + fetchErr.details : ''}`);
-        (existing || []).forEach(r => existingMap.set(`${r.order_no}||${r.sku||''}`, { status: r.status }));
+        (existing || []).forEach(o => {
+          const ordKey = norm(o.order_no);
+          existingByKey.set(`${ordKey}||${norm(o.sku)}`, { status: o.status });
+          if (!existingByOrder.has(ordKey)) existingByOrder.set(ordKey, []);
+          existingByOrder.get(ordKey).push({ sku: o.sku, status: o.status });
+        });
       }
 
-      // ── Pisahkan: insert baru vs update status yang berubah
+      // ── Pisahkan: insert baru vs update status yang berubah vs sudah sama vs tidak ditemukan
       const toInsert = [];
       // toUpdateGroups: key = "newStatus__stokAction" → { fields, orderNos[] }
       // Di-group agar banyak order_no bisa diupdate dalam satu .in() call
-      const toUpdateGroups = {};
+      const toUpdateGroups   = {};
+      const orderNosUpdated  = new Set();
+      const orderNosSame     = new Set();
+      const orderNosNotFound = new Set();
 
       for (const r of records) {
-        const key      = `${r.order_no}||${r.sku||''}`;
-        const existing = existingMap.get(key);
-        if (!existing) {
+        const exactKey = `${norm(r.order_no)}||${norm(r.sku)}`;
+        // Cocokkan order_no+sku persis dulu (case-insensitive/trim); kalau tidak ketemu,
+        // fallback ke semua baris DB dengan order_no yang sama. Fallback ini penting untuk
+        // pesanan yang SKU-nya sengaja diubah manual di DB (mis. barang pengganti yang
+        // benar-benar keluar dari gudang berbeda dari yang dipesan pembeli) — statusnya tetap
+        // harus bisa diupdate mengikuti file, TAPI kolom sku TIDAK PERNAH ikut ditimpa: field
+        // yang diupdate hanya status/stok_action/cancel_reason (lihat `fields` di bawah),
+        // sku milik DB yang sudah sengaja diubah manual tetap dipertahankan apa adanya.
+        const matches = existingByKey.has(exactKey)
+          ? [existingByKey.get(exactKey)]
+          : (existingByOrder.get(norm(r.order_no)) || []);
+
+        if (!matches.length) {
           toInsert.push(r);
-        } else if (existing.status !== r.status) {
-          const groupKey = `${r.status}__${r.stok_action || ''}`;
-          if (!toUpdateGroups[groupKey]) {
-            toUpdateGroups[groupKey] = {
-              fields:   { status: r.status, stok_action: r.stok_action, cancel_reason: r.cancel_reason },
-              orderNos: new Set(),
-            };
-          }
-          toUpdateGroups[groupKey].orderNos.add(r.order_no);
+          orderNosNotFound.add(r.order_no);
+          continue;
         }
-        // status sama → tidak perlu apa-apa
+
+        const needsUpdate = matches.some(m => m.status !== r.status);
+        if (!needsUpdate) {
+          orderNosSame.add(r.order_no);
+          continue;
+        }
+
+        const groupKey = `${r.status}__${r.stok_action || ''}`;
+        if (!toUpdateGroups[groupKey]) {
+          toUpdateGroups[groupKey] = {
+            fields:   { status: r.status, stok_action: r.stok_action, cancel_reason: r.cancel_reason },
+            orderNos: new Set(),
+          };
+        }
+        toUpdateGroups[groupKey].orderNos.add(r.order_no);
+        orderNosUpdated.add(r.order_no);
       }
 
       // ── Insert baru (harian only, batch 200)
@@ -962,6 +1015,20 @@ const Penjualan = {
         }
       }
 
+      // ── Ringkasan status yang tidak dikenali sama sekali (bukan yang sengaja dilewati
+      // seperti Menunggu Pembayaran) — berlaku untuk kedua mode karena berasal dari parsing
+      // yang sama.
+      const unrecognizedTotal = [...unrecognizedStatuses.values()].reduce((a, b) => a + b, 0);
+      const unrecognizedTop   = [...unrecognizedStatuses.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+      const unrecognizedHtml  = unrecognizedTotal ? `
+        <div class="mt-2 p-2 bg-red-50 border border-red-100 rounded text-xs text-red-700">
+          <p class="font-semibold">${unrecognizedTotal} baris berstatus tidak dikenali (dilewati):</p>
+          <ul class="list-disc list-inside mt-1">
+            ${unrecognizedTop.map(([s, n]) => `<li>"${s || '(kosong)'}" — ${n} baris</li>`).join('')}
+          </ul>
+          ${unrecognizedStatuses.size > unrecognizedTop.length ? `<p class="mt-1">+${unrecognizedStatuses.size - unrecognizedTop.length} nilai status lain</p>` : ''}
+        </div>` : '';
+
       // ── Tampilkan hasil
       if (mode === 'harian') {
         const countByStatus = s => toInsert.filter(r => r.status === s).length;
@@ -987,6 +1054,7 @@ const Penjualan = {
               ${nReview   ? `<p class="text-orange-600 font-semibold">Paket Hilang: ${nReview}</p>` : ''}
             </div>`}
             <p class="text-xs text-gray-500 pt-1">Total Omzet baru: ${App.formatRupiah(totalOmzet)}</p>
+            ${unrecognizedHtml}
           </div>`;
         App.toast(`Import Harian: ${toInsert.length} pesanan baru`, 'success');
       } else {
@@ -1000,12 +1068,17 @@ const Penjualan = {
         res.innerHTML = `
           <div class="space-y-1">
             <p class="font-semibold text-green-700">Import Mingguan selesai!</p>
-            <p class="text-xs text-gray-600">Status diperbarui: <strong>${totalUpdated}</strong> pesanan</p>
+            <p class="text-xs text-gray-600">Status diperbarui: <strong>${orderNosUpdated.size}</strong> pesanan</p>
             ${uRows.length ? `<div class="mt-2 text-xs space-y-0.5 border-t border-gray-100 pt-2">
               ${uRows.map(([s, n]) => `<p><span class="font-medium ${badgeMap[s]||'text-gray-600'}">${s}:</span> ${n}</p>`).join('')}
             </div>` : `<p class="text-xs text-gray-400 mt-1">Tidak ada perubahan status.</p>`}
+            <div class="text-xs text-gray-500 pt-2 border-t border-gray-100 space-y-0.5">
+              <p>Dilewati (status di file sama dengan di database): <strong>${orderNosSame.size}</strong> pesanan</p>
+              <p>Tidak ditemukan di database (pesanan baru — Import Mingguan tidak menambahkannya, lihat catatan fitur): <strong>${orderNosNotFound.size}</strong> pesanan</p>
+            </div>
+            ${unrecognizedHtml}
           </div>`;
-        App.toast(`Import Mingguan: ${totalUpdated} status diperbarui`, 'success');
+        App.toast(`Import Mingguan: ${orderNosUpdated.size} status diperbarui`, 'success');
       }
 
       res.className = 'mt-3 p-3 rounded-lg bg-green-50 border border-green-100 text-sm';
