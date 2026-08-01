@@ -762,6 +762,27 @@ alter table ads          add column if not exists sudah_potong_income boolean no
 alter table ads_expenses add column if not exists sudah_potong_income boolean not null default false;
 
 -- ═══════════════════════════════════════════════════════
+--  MIGRASI v20 — Status Pembayaran Iklan Kartu Kredit
+--  (Belum Dibayar / Sudah Dibayar)
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- Iklan bersumber "Kartu Kredit" tidak langsung mengurangi Saldo BCA — uangnya
+-- baru keluar saat tagihan CC dibayar (biasanya bulan berikutnya). Kolom ini
+-- mencatat kapan tagihan itu benar-benar dibayar, supaya Saldo BCA baru
+-- berkurang sejak tanggal tsb, bukan sejak biaya iklannya dicatat/tayang.
+-- Default false (Belum Dibayar) menjaga semua data lama tidak berubah
+-- perilakunya sampai ditandai manual lewat js/iklan.js (form Tambah Iklan,
+-- badge "CC - Belum Dibayar" yang bisa diklik, atau tombol "Tandai Tagihan CC
+-- Bulan Ini Dibayar" untuk banyak baris sekaligus). Laba Rugi TIDAK
+-- terpengaruh — js/labarugi.js menghitung totalAds tanpa memandang status ini,
+-- biaya iklan tetap dicatat penuh secara akrual di bulan iklan tayang.
+alter table ads          add column if not exists cc_dibayar boolean not null default false;
+alter table ads          add column if not exists cc_tanggal_bayar date;
+alter table ads_expenses add column if not exists cc_dibayar boolean not null default false;
+alter table ads_expenses add column if not exists cc_tanggal_bayar date;
+
+-- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup
 --  Untuk production, gunakan Supabase Auth + RLS policies.
 --  Untuk sementara (anon key): disable RLS di table settings.

@@ -56,11 +56,11 @@ const Dashboard = {
       ] = await Promise.all([
         db.from('orders').select('order_no,status,created_at,order_date,qty,sku,source,selling_price,metode_bayar'),
         db.from('hpp_items').select('sku,cost_per_unit,total_cost,created_at').order('created_at', { ascending: false }),
-        db.from('ads').select('cost,ad_date,sumber_bayar,sudah_potong_income'),
+        db.from('ads').select('cost,ad_date,sumber_bayar,sudah_potong_income,cc_dibayar'),
         db.from('operational').select('cost,op_date'),
         db.from('scan_logs').select('id,expedition,is_cancelled,scan_date').eq('scan_date', App.todayISO()),
         db.from('income_releases').select('order_no,gross_amount,discount,voucher_seller,net_amount,release_date'),
-        db.from('ads_expenses').select('biaya,month,year,sumber_bayar,sudah_potong_income'),
+        db.from('ads_expenses').select('biaya,month,year,sumber_bayar,sudah_potong_income,cc_dibayar'),
         db.from('kas_pribadi').select('tipe,jumlah'),
         db.from('hutang_pembayaran').select('sumber_kas_bisnis'),
         db.from('penarikan_saldo').select('jumlah'),
@@ -180,6 +180,15 @@ const Dashboard = {
       // Iklan yang sumber_bayar-nya "Saldo BCA"/"Saldo Shopee" — lihat catatan di atas.
       const totalAdsBcaAllTime = sum((adsData || []).filter(a => a.sumber_bayar === 'Saldo BCA'), 'cost')
         + sum((adsImport || []).filter(a => a.sumber_bayar === 'Saldo BCA'), 'biaya');
+      // Iklan bersumber "Kartu Kredit" TIDAK langsung mengurangi Saldo BCA — uangnya baru
+      // keluar saat tagihan CC dibayar (biasanya bulan berikutnya), dicatat via cc_dibayar
+      // (checkbox "Tandai Sudah Dibayar" di js/iklan.js). Begitu dicentang, tagihan itu
+      // dianggap sudah ditarik dari Saldo BCA hari itu, terlepas kapan biayanya sendiri
+      // dicatat/tayang — sama seperti totalBayarHutangKasBisnisAllTime di atas (basis kas
+      // riil, bukan accrual). Laba Rugi TIDAK terpengaruh (labarugi.js totalAds tidak
+      // difilter cc_dibayar) — flag ini HANYA mempengaruhi kas Saldo BCA di sini.
+      const totalAdsCcDibayarAllTime = sum((adsData || []).filter(a => a.sumber_bayar === 'Kartu Kredit' && a.cc_dibayar), 'cost')
+        + sum((adsImport || []).filter(a => a.sumber_bayar === 'Kartu Kredit' && a.cc_dibayar), 'biaya');
       // Kecualikan baris yang sudah_potong_income = true — biaya iklan (mis. Isi Ulang Saldo
       // Iklan Otomatis) yang nilainya SUDAH otomatis terpotong dari net_amount per pesanan di
       // Income/Penghasilan, sehingga sudah ikut mengurangi netRevAllTime di atas. Kalau ikut
@@ -200,6 +209,7 @@ const Dashboard = {
         - totalPriveAllTime + totalSetoranAllTime
         - totalBayarHutangKasBisnisAllTime
         - totalAdsBcaAllTime
+        - totalAdsCcDibayarAllTime
         + manualTransferBcaAllTime;
       const sisaKas = saldoShopee + saldoBCA;
 
@@ -311,7 +321,7 @@ const Dashboard = {
       <!-- Row 1b: Saldo & Penarikan -->
       <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
         ${this._bigCard('Saldo Shopee', App.formatRupiah(saldoShopee), 'Modal Awal + Net Diterima Shopee - Penarikan + Penyesuaian - Iklan + Manual/Offline metode Transfer Shopee (all-time, Tunai dikecualikan)', 'bg-orange-50','text-orange-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
-        ${this._bigCard('Saldo BCA', App.formatRupiah(saldoBCA), 'Modal Awal + Penarikan - HPP/Ops/Prive/Hutang/UangMuka - Iklan + Manual/Offline metode Transfer BCA (all-time, Iklan Kartu Kredit/Shopee & Manual Tunai dikecualikan)', 'bg-indigo-50','text-indigo-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
+        ${this._bigCard('Saldo BCA', App.formatRupiah(saldoBCA), 'Modal Awal + Penarikan - HPP/Ops/Prive/Hutang/UangMuka - Iklan (Saldo BCA + Kartu Kredit yang sudah dibayar) + Manual/Offline metode Transfer BCA (all-time, Iklan Kartu Kredit belum dibayar/Saldo Shopee & Manual Tunai dikecualikan)', 'bg-indigo-50','text-indigo-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
         ${this._bigCard('Sisa Kas', App.formatRupiah(sisaKas), 'Saldo Shopee + Saldo BCA (total gabungan)', sisaKas>=0?'bg-sky-50':'bg-red-50', sisaKas>=0?'text-sky-600':'text-red-600','M9 8h6m-5 4h4m1 8H8a2 2 0 01-2-2V6a2 2 0 012-2h4.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V18a2 2 0 01-2 2z')}
       </div>`}
 

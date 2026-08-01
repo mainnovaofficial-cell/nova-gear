@@ -31,10 +31,15 @@ const Iklan = {
       </div>
     </div>
 
+    <div id="iklan-cc-summary" class="grid grid-cols-1 sm:max-w-xs gap-3 mb-5"></div>
+
     <div class="card mb-5">
       <div class="card-header mb-3 flex-wrap gap-2">
         <span class="card-title">Iklan Shopee per Produk</span>
-        <button onclick="Iklan._deleteExpensesMonth()" class="btn-secondary text-xs !py-1 text-red-600">Hapus Data Bulan Ini</button>
+        <div class="flex gap-2">
+          <button onclick="Iklan._openMarkMonthCcPaid()" class="btn-secondary text-xs !py-1 text-blue-600">Tandai Tagihan CC Bulan Ini Dibayar</button>
+          <button onclick="Iklan._deleteExpensesMonth()" class="btn-secondary text-xs !py-1 text-red-600">Hapus Data Bulan Ini</button>
+        </div>
       </div>
       <div id="iklan-exp-summary" class="grid grid-cols-1 sm:max-w-xs gap-3 mb-4"></div>
       <div id="iklan-exp-table"></div>
@@ -48,7 +53,7 @@ const Iklan = {
       <div id="iklan-summary" class="grid grid-cols-1 sm:max-w-xs gap-3 mb-3"></div>
       <div id="iklan-table"></div>
     </div>`;
-    await Promise.all([this._loadExpenses(), this._load()]);
+    await Promise.all([this._loadExpenses(), this._load(), this._loadCcUnpaid()]);
   },
 
   // value "0" pada dropdown Bulan = "Semua" (tidak difilter periode).
@@ -218,7 +223,7 @@ const Iklan = {
       const tahunSel = document.getElementById('ik-tahun');
       if (bulanSel) bulanSel.value = bulan;
       if (tahunSel) tahunSel.value = tahun;
-      await this._loadExpenses();
+      await this._refreshAfterCcChange();
 
     } catch (err) {
       prog.classList.add('hidden');
@@ -277,7 +282,110 @@ const Iklan = {
     const { error } = await App.db().from('ads_expenses').delete().eq('month', bulan).eq('year', tahun);
     if (error) { App.toast('Gagal hapus: ' + error.message, 'error'); return; }
     App.toast('Data iklan bulan ini dihapus.', 'success');
-    await this._loadExpenses();
+    await this._refreshAfterCcChange();
+  },
+
+  /* ═══════════════════════════════════════════════
+     STATUS PEMBAYARAN KARTU KREDIT (Belum/Sudah Dibayar)
+     Iklan bersumber "Kartu Kredit" tidak langsung mengurangi Saldo BCA —
+     uangnya baru keluar saat tagihan CC dibayar (biasanya bulan berikutnya).
+     Laba Rugi TIDAK terpengaruh oleh status ini (tetap akrual, dicatat penuh
+     di bulan iklan tayang) — lihat js/labarugi.js (totalAds tidak difilter
+     cc_dibayar) dan js/dashboard.js (totalAdsCcDibayarAllTime).
+  ═══════════════════════════════════════════════ */
+  async _refreshAfterCcChange() {
+    await Promise.all([this._loadExpenses(), this._load(), this._loadCcUnpaid()]);
+  },
+
+  async _loadCcUnpaid() {
+    const el = document.getElementById('iklan-cc-summary');
+    if (!el) return;
+    const [{ data: adsUnpaid, error: e1 }, { data: expUnpaid, error: e2 }] = await Promise.all([
+      App.db().from('ads').select('cost').eq('sumber_bayar', 'Kartu Kredit').eq('cc_dibayar', false),
+      App.db().from('ads_expenses').select('biaya').eq('sumber_bayar', 'Kartu Kredit').eq('cc_dibayar', false),
+    ]);
+    if (e1 || e2) { App.toast('Gagal memuat tagihan CC: ' + (e1 || e2).message, 'error'); return; }
+    const total = (adsUnpaid || []).reduce((s, r) => s + (+r.cost || 0), 0)
+      + (expUnpaid || []).reduce((s, r) => s + (+r.biaya || 0), 0);
+    el.innerHTML = `
+      <div class="stat-card border-l-4 border-red-400">
+        <p class="stat-label text-red-600">Tagihan CC Belum Dibayar</p>
+        <p class="stat-value text-red-600 text-money">${App.formatRupiah(total)}</p>
+        <p class="stat-sub">semua waktu — biaya iklan sumber Kartu Kredit yang tagihannya belum dibayar</p>
+      </div>`;
+  },
+
+  // Badge status CC — hanya tampil untuk entri bersumber "Kartu Kredit". Klik untuk
+  // toggle: "Belum Dibayar" → buka modal isi tanggal; "Dibayar" → konfirmasi batalkan.
+  _ccBadge(table, r) {
+    if (r.sumber_bayar !== 'Kartu Kredit') return '';
+    if (r.cc_dibayar) {
+      return ` <span class="badge badge-green" style="cursor:pointer" title="Klik untuk batalkan status Sudah Dibayar" onclick="Iklan._undoCcPaid('${table}','${r.id}')">CC - Dibayar ${App.formatDate(r.cc_tanggal_bayar)}</span>`;
+    }
+    return ` <span class="badge badge-red" style="cursor:pointer" title="Klik untuk tandai Sudah Dibayar" onclick="Iklan._openMarkCcPaid('${table}','${r.id}')">CC - Belum Dibayar</span>`;
+  },
+
+  _openMarkCcPaid(table, id) {
+    App.openModal({
+      title: 'Tandai Tagihan CC Sudah Dibayar',
+      body: `
+        <p class="text-sm text-gray-600 mb-3">Biaya iklan ini akan ditandai sudah dibayar lewat kartu kredit, dan mulai mengurangi Saldo BCA. Laba Rugi tidak berubah.</p>
+        <div><label class="label">Tanggal Dibayar *</label><input id="cc-pay-date" type="date" class="input" value="${App.todayISO()}"/></div>`,
+      footer: `<button onclick="App.closeModal()" class="btn-secondary">Batal</button>
+               <button onclick="Iklan._confirmMarkCcPaid('${table}','${id}')" class="btn-primary">Tandai Dibayar</button>`,
+    });
+  },
+
+  async _confirmMarkCcPaid(table, id) {
+    const tanggal = document.getElementById('cc-pay-date').value;
+    if (!tanggal) { App.toast('Tanggal wajib diisi.', 'warning'); return; }
+    const { error } = await App.db().from(table).update({ cc_dibayar: true, cc_tanggal_bayar: tanggal }).eq('id', id);
+    if (error) { App.toast('Gagal menyimpan: ' + error.message, 'error'); return; }
+    App.closeModal();
+    App.toast('Tagihan ditandai sudah dibayar.', 'success');
+    await this._refreshAfterCcChange();
+  },
+
+  async _undoCcPaid(table, id) {
+    const ok = await App.confirm('Batalkan status "Sudah Dibayar"? Biaya ini akan kembali dianggap belum dibayar dan tidak mengurangi Saldo BCA.');
+    if (!ok) return;
+    const { error } = await App.db().from(table).update({ cc_dibayar: false, cc_tanggal_bayar: null }).eq('id', id);
+    if (error) { App.toast('Gagal menyimpan: ' + error.message, 'error'); return; }
+    App.toast('Status dibatalkan.', 'success');
+    await this._refreshAfterCcChange();
+  },
+
+  // Tandai bulan berjalan (filter Iklan Shopee per Produk) sekaligus — CSV Iklanku bisa
+  // berisi puluhan produk per bulan, menandai satu-satu tidak praktis. Hanya menyentuh
+  // baris sumber "Kartu Kredit" yang belum dibayar; baris yang sudah dibayar tidak diubah.
+  _openMarkMonthCcPaid() {
+    const { bulan, tahun } = this._period();
+    if (!bulan) { App.toast('Pilih bulan tertentu dulu (bukan "Semua") untuk menandai tagihan.', 'warning'); return; }
+    const unpaidCount = this._expenses.filter(r => r.sumber_bayar === 'Kartu Kredit' && !r.cc_dibayar).length;
+    if (!unpaidCount) { App.toast('Tidak ada tagihan Kartu Kredit yang belum dibayar di bulan ini.', 'info'); return; }
+    App.openModal({
+      title: 'Tandai Tagihan CC Bulan Ini Sudah Dibayar',
+      body: `
+        <p class="text-sm text-gray-600 mb-3">${unpaidCount} produk iklan bersumber Kartu Kredit di ${this._bulanNames[bulan]} ${tahun} akan ditandai sudah dibayar, dan mulai mengurangi Saldo BCA. Laba Rugi tidak berubah.</p>
+        <div><label class="label">Tanggal Dibayar *</label><input id="cc-pay-month-date" type="date" class="input" value="${App.todayISO()}"/></div>`,
+      footer: `<button onclick="App.closeModal()" class="btn-secondary">Batal</button>
+               <button onclick="Iklan._confirmMarkMonthCcPaid()" class="btn-primary">Tandai Dibayar</button>`,
+    });
+  },
+
+  async _confirmMarkMonthCcPaid() {
+    const { bulan, tahun } = this._period();
+    const tanggal = document.getElementById('cc-pay-month-date').value;
+    if (!tanggal) { App.toast('Tanggal wajib diisi.', 'warning'); return; }
+    const { error } = await App.db().from('ads_expenses')
+      .update({ cc_dibayar: true, cc_tanggal_bayar: tanggal })
+      .eq('month', bulan).eq('year', tahun)
+      .eq('sumber_bayar', 'Kartu Kredit')
+      .eq('cc_dibayar', false);
+    if (error) { App.toast('Gagal menyimpan: ' + error.message, 'error'); return; }
+    App.closeModal();
+    App.toast('Tagihan CC bulan ini ditandai sudah dibayar.', 'success');
+    await this._refreshAfterCcChange();
   },
 
   _renderExpenses() {
@@ -303,7 +411,7 @@ const Iklan = {
           <tr>
             <td class="max-w-[260px] truncate">${r.product_name}</td>
             <td class="text-right font-semibold text-money">${App.formatRupiah(r.biaya)}</td>
-            <td><span class="badge ${sumberColor[r.sumber_bayar]||sumberColor.default}">${r.sumber_bayar||'Kartu Kredit'}</span>${r.sudah_potong_income ? ` <span class="badge badge-gray" title="Sudah otomatis terpotong lewat Income Shopee — tidak mengurangi Saldo Shopee lagi">✓ di Income</span>` : ''}</td>
+            <td><span class="badge ${sumberColor[r.sumber_bayar]||sumberColor.default}">${r.sumber_bayar||'Kartu Kredit'}</span>${r.sudah_potong_income ? ` <span class="badge badge-gray" title="Sudah otomatis terpotong lewat Income Shopee — tidak mengurangi Saldo Shopee lagi">✓ di Income</span>` : ''}${this._ccBadge('ads_expenses', r)}</td>
             <td class="text-right">${App.formatNumber(r.konversi || 0)}</td>
             <td class="text-right text-money">${App.formatRupiah(r.omzet_iklan)}</td>
             <td class="text-right">${(+r.acos || 0).toFixed(2)}%</td>
@@ -365,7 +473,7 @@ const Iklan = {
             <td><span class="badge ${platformColor[r.platform]||platformColor.default}">${r.platform||'-'}</span></td>
             <td class="max-w-[160px] truncate">${r.campaign_name||'-'}</td>
             <td class="text-right font-semibold text-money">${App.formatRupiah(r.cost)}</td>
-            <td><span class="badge ${sumberColor[r.sumber_bayar]||sumberColor.default}">${r.sumber_bayar||'Kartu Kredit'}</span>${r.sudah_potong_income ? ` <span class="badge badge-gray" title="Sudah otomatis terpotong lewat Income Shopee — tidak mengurangi Saldo Shopee lagi">✓ di Income</span>` : ''}</td>
+            <td><span class="badge ${sumberColor[r.sumber_bayar]||sumberColor.default}">${r.sumber_bayar||'Kartu Kredit'}</span>${r.sudah_potong_income ? ` <span class="badge badge-gray" title="Sudah otomatis terpotong lewat Income Shopee — tidak mengurangi Saldo Shopee lagi">✓ di Income</span>` : ''}${this._ccBadge('ads', r)}</td>
             <td class="text-right text-gray-500">${App.formatNumber(r.impressions||0)}</td>
             <td class="text-right text-gray-500">${App.formatNumber(r.clicks||0)}</td>
             <td class="text-right">${App.formatNumber(r.orders_count||0)}</td>
@@ -432,7 +540,7 @@ const Iklan = {
     if (error) { App.toast('Error: ' + error.message, 'error'); return; }
     App.closeModal();
     App.toast('Biaya iklan disimpan!', 'success');
-    await this._load();
+    await this._refreshAfterCcChange();
   },
 
   async delete(id) {
@@ -444,6 +552,7 @@ const Iklan = {
     this._data = this._data.filter(r => r.id !== id);
     this._renderSummary();
     this._renderTable();
+    await this._loadCcUnpaid();
   },
 
   _exportCSV() {
