@@ -19,7 +19,7 @@ const Operasional = {
         </select>
         <input id="ops-tahun" type="number" class="input !py-1 text-xs w-24" value="${now.getFullYear()}" min="2020" max="2035"/>
         <button onclick="Operasional._applyPeriod()" class="btn-secondary text-xs">Tampilkan</button>
-        <button onclick="Operasional.openAdd()" class="btn-primary text-xs">
+        <button onclick="Operasional.openForm()" class="btn-primary text-xs">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           Tambah Biaya
         </button>
@@ -108,9 +108,14 @@ const Operasional = {
           <td class="text-right font-semibold text-money">${App.formatRupiah(r.cost)}</td>
           <td>${r.recurring ? `<span class="badge badge-blue">Rutin</span>` : ''}</td>
           <td><span class="badge ${badgeClass}" ${clickAttr} ${titleAttr}>${status}</span></td>
-          <td><button onclick="Operasional.delete('${r.id}')" class="text-gray-300 hover:text-red-500 transition-colors">
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-          </button></td>
+          <td class="whitespace-nowrap">
+            <button onclick="Operasional.openForm('${r.id}')" class="text-gray-300 hover:text-blue-500 transition-colors mr-2">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+            </button>
+            <button onclick="Operasional.delete('${r.id}')" class="text-gray-300 hover:text-red-500 transition-colors">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </button>
+          </td>
         </tr>`;
         }).join('')}</tbody>
       </table>
@@ -142,31 +147,38 @@ const Operasional = {
     }).join('')}</div>`;
   },
 
-  openAdd() {
+  openForm(id) {
+    const r = id ? this._data.find(x => x.id === id) : null;
+    const statusOptions = ['Belum Dibayar', 'Sudah Dibayar'];
     App.openModal({
-      title: 'Tambah Biaya Operasional',
+      title: r ? 'Edit Biaya Operasional' : 'Tambah Biaya Operasional',
       body: `
       <div class="space-y-4">
-        <div><label class="label">Tanggal *</label><input id="op-date" type="date" class="input" value="${App.todayISO()}"/></div>
+        <div><label class="label">Tanggal *</label><input id="op-date" type="date" class="input" value="${r ? r.op_date : App.todayISO()}"/></div>
         <div><label class="label">Kategori *</label>
           <select id="op-cat" class="input">
-            ${this._categories.map(c => `<option>${c}</option>`).join('')}
+            ${this._categories.map(c => `<option ${r && r.category === c ? 'selected' : ''}>${c}</option>`).join('')}
           </select>
         </div>
-        <div><label class="label">Deskripsi *</label><input id="op-desc" class="input" placeholder="Detail pengeluaran"/></div>
-        <div><label class="label">Biaya (Rp) *</label><input id="op-cost" type="number" class="input" placeholder="0"/></div>
+        <div><label class="label">Deskripsi *</label><input id="op-desc" class="input" placeholder="Detail pengeluaran" value="${r ? (r.description || '') : ''}"/></div>
+        <div><label class="label">Biaya (Rp) *</label><input id="op-cost" type="number" class="input" placeholder="0" value="${r ? r.cost : ''}"/></div>
         <div class="flex items-center gap-3">
-          <input id="op-recurring" type="checkbox" class="w-4 h-4 rounded text-blue-600"/>
+          <input id="op-recurring" type="checkbox" class="w-4 h-4 rounded text-blue-600" ${r && r.recurring ? 'checked' : ''}/>
           <label for="op-recurring" class="text-sm text-gray-600">Biaya rutin (bulanan)</label>
         </div>
-        <div><label class="label">Catatan</label><input id="op-notes" class="input" placeholder="Opsional"/></div>
+        <div><label class="label">Status Bayar</label>
+          <select id="op-status" class="input">
+            ${statusOptions.map(s => `<option ${(r ? (r.payment_status || 'Belum Dibayar') : 'Belum Dibayar') === s ? 'selected' : ''}>${s}</option>`).join('')}
+          </select>
+        </div>
+        <div><label class="label">Catatan</label><input id="op-notes" class="input" placeholder="Opsional" value="${r ? (r.notes || '') : ''}"/></div>
       </div>`,
       footer: `<button onclick="App.closeModal()" class="btn-secondary">Batal</button>
-               <button onclick="Operasional.save()" class="btn-primary">Simpan</button>`,
+               <button onclick="Operasional.save(${r ? `'${r.id}'` : ''})" class="btn-primary">Simpan</button>`,
     });
   },
 
-  async save() {
+  async save(id) {
     const desc = document.getElementById('op-desc').value.trim();
     const cost = +document.getElementById('op-cost').value || 0;
     if (!desc || !cost) { App.toast('Deskripsi dan biaya wajib diisi.', 'warning'); return; }
@@ -177,13 +189,18 @@ const Operasional = {
       cost,
       recurring:      document.getElementById('op-recurring').checked,
       notes:          document.getElementById('op-notes').value.trim() || null,
-      created_by:     App.isAdmin() ? 'admin' : 'owner',
-      payment_status: 'Belum Dibayar',
+      payment_status: document.getElementById('op-status').value,
     };
-    const { error } = await App.db().from('operational').insert(payload);
+    let error;
+    if (id) {
+      ({ error } = await App.db().from('operational').update(payload).eq('id', id));
+    } else {
+      payload.created_by = App.isAdmin() ? 'admin' : 'owner';
+      ({ error } = await App.db().from('operational').insert(payload));
+    }
     if (error) { App.toast('Error: ' + error.message, 'error'); return; }
     App.closeModal();
-    App.toast('Biaya operasional disimpan!', 'success');
+    App.toast(id ? 'Biaya operasional diperbarui!' : 'Biaya operasional disimpan!', 'success');
     await this._load();
   },
 
