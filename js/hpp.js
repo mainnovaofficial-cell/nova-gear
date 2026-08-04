@@ -36,7 +36,7 @@ const HPP = {
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           Tambah Pembelian
         </button>
-        <button id="hpp-btn-add-um" onclick="HPP.openAddUM()" class="btn-primary text-xs hidden">
+        <button id="hpp-btn-add-um" onclick="HPP.openFormUM()" class="btn-primary text-xs hidden">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           Tambah Uang Muka
         </button>
@@ -174,9 +174,14 @@ const HPP = {
           <td class="text-xs text-gray-400">${b.batch_no||'-'}</td>
           <td class="text-xs">${sourceLabel(b.source)}</td>
           <td colspan="4" class="text-xs text-gray-400">Belum ada produk</td>
-          <td><button onclick="HPP.delete('${b.id}')" class="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Batch">
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-          </button></td>
+          <td class="whitespace-nowrap">
+            <button onclick="HPP.openEdit('${b.id}')" class="text-gray-300 hover:text-blue-500 transition-colors mr-2" title="Edit Batch">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+            </button>
+            <button onclick="HPP.delete('${b.id}')" class="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Batch">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </button>
+          </td>
         </tr>`;
         return;
       }
@@ -191,7 +196,10 @@ const HPP = {
           <td class="text-right">${App.formatNumber(it.qty)}</td>
           <td class="text-right text-money">${App.formatRupiah(it.cost_per_unit)}</td>
           <td class="text-right font-bold text-money">${App.formatRupiah(it.total_cost)}</td>
-          ${idx === 0 ? `<td rowspan="${items.length}">
+          ${idx === 0 ? `<td rowspan="${items.length}" class="whitespace-nowrap">
+            <button onclick="HPP.openEdit('${b.id}')" class="text-gray-300 hover:text-blue-500 transition-colors mr-2" title="Edit Batch">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+            </button>
             <button onclick="HPP.delete('${b.id}')" class="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Batch">
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
             </button>
@@ -254,20 +262,98 @@ const HPP = {
     this._renderUMPicker();
   },
 
-  _renderUMPicker() {
+  openEdit(batchId) {
+    const batch = this._data.find(b => b.id === batchId);
+    if (!batch) { App.toast('Batch tidak ditemukan.', 'error'); return; }
+    const settings = AppState.settings || {};
+    const rate = +batch.yuan_rate || settings.yuan_rate || 2200;
+    this._rowIds = [];
+    this._rowSeq = 0;
+    this._selectedUM = new Set(this._umData.filter(u => u.hpp_batch_id === batchId).map(u => u.id));
+    App.openModal({
+      title: 'Edit Pembelian Stok (Batch)',
+      size: 'max-w-3xl',
+      body: `
+      <div class="grid grid-cols-3 gap-4 mb-2">
+        <div><label class="label">Tanggal Beli *</label><input id="h-date" type="date" class="input" value="${batch.purchase_date}"/></div>
+        <div><label class="label">Batch No.</label><input id="h-batch" class="input" placeholder="Opsional" value="${batch.batch_no || ''}"/></div>
+        <div><label class="label">Sumber *</label>
+          <select id="h-source" class="input" onchange="HPP._onSourceChange()">
+            <option value="china" ${batch.source === 'china' ? 'selected' : ''}>China (Yuan)</option>
+            <option value="indonesia" ${batch.source === 'indonesia' ? 'selected' : ''}>Indonesia (Rupiah)</option>
+          </select>
+        </div>
+      </div>
+      <div id="h-rate-wrap" class="mb-4">
+        <label class="label">Kurs Yuan → IDR</label>
+        <input id="h-rate" type="number" class="input max-w-[200px]" value="${rate}" oninput="HPP._recalcAll()"/>
+        <p class="text-xs text-gray-400 mt-1">Dipakai untuk konversi produk/freebie yang berasal dari China.</p>
+      </div>
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Daftar Produk</span>
+        <button type="button" onclick="HPP._addRow()" class="btn-secondary text-xs !py-1">+ Tambah Produk</button>
+      </div>
+      <div id="h-items"></div>
+      <div class="mt-4 pt-4 border-t border-gray-100">
+        <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Gunakan Uang Muka (opsional)</span>
+        <p class="text-xs text-gray-400 mt-0.5 mb-2">Pilih Uang Muka yang sudah dibayar untuk barang ini — otomatis di-link ke batch ini dan tidak akan memotong Saldo BCA lagi (hanya sisanya, mis. ongkir, yang kepotong normal).</p>
+        <div id="h-um-section"></div>
+      </div>`,
+      footer: `<button onclick="App.closeModal()" class="btn-secondary">Batal</button>
+               <button onclick="HPP.saveEdit('${batchId}')" class="btn-primary">Simpan Perubahan</button>`,
+    });
+    const items = batch.hpp_items || [];
+    if (items.length) items.forEach(it => this._addEditRow(it, rate));
+    else this._addRow();
+    this._updateKursVisibility();
+    this._renderUMPicker(batchId);
+  },
+
+  // Isi baris produk dari data hpp_items tersimpan. Field harga/ongkir yang tersimpan sudah
+  // final dalam Rupiah per-unit, jadi mode diset 'manual' selalu; untuk sumber China, nilai
+  // Yuan yang ditampilkan dihitung mundur (price_unit ÷ rate batch) supaya kalkulasi ulang
+  // dengan rate yang sama menghasilkan angka persis sama seperti sebelum diedit.
+  _addEditRow(it, rate) {
+    this._rowSeq += 1;
+    const id = this._rowSeq;
+    this._rowIds.push(id);
+    document.getElementById('h-items').insertAdjacentHTML('beforeend', this._rowHtml(id));
+
+    document.getElementById(`h-sku-${id}`).value = it.sku || '';
+    document.getElementById(`h-name-${id}`).value = it.product_name || '';
+    document.getElementById(`h-qty-${id}`).value = it.qty || 1;
+    document.getElementById(`h-mode-${id}`).value = 'manual';
+    this._onModeChange(id);
+
+    const source = document.getElementById('h-source')?.value || 'china';
+    const priceRaw = source === 'china' ? (rate ? (+it.price_unit || 0) / rate : 0) : (+it.price_unit || 0);
+    document.getElementById(`h-price-${id}`).value = priceRaw || '';
+    document.getElementById(`h-ship-${id}`).value = it.shipping_unit || '';
+
+    if (it.freebie_name) {
+      document.getElementById(`h-freebie-toggle-${id}`).checked = true;
+      document.getElementById(`h-freebie-box-${id}`).classList.remove('hidden');
+      document.getElementById(`h-freebie-name-${id}`).value = it.freebie_name || '';
+      document.getElementById(`h-freebie-source-${id}`).value = it.freebie_source || 'china';
+      document.getElementById(`h-freebie-price-${id}`).value = it.freebie_price_unit || '';
+    }
+    this._calcRow(id);
+  },
+
+  _renderUMPicker(currentBatchId) {
     const el = document.getElementById('h-um-section');
     if (!el) return;
-    const unused = this._umData.filter(u => !u.terpakai);
-    if (!unused.length) {
+    const list = this._umData.filter(u => !u.terpakai || (currentBatchId && u.hpp_batch_id === currentBatchId));
+    if (!list.length) {
       el.innerHTML = `<p class="text-xs text-gray-400">Tidak ada uang muka yang belum terpakai.</p>`;
       return;
     }
     el.innerHTML = `
       <div class="space-y-1.5 max-h-40 overflow-y-auto border rounded-lg p-2">
-        ${unused.map(u => `
+        ${list.map(u => `
           <label class="flex items-center justify-between gap-2 text-xs py-1 px-1.5 rounded hover:bg-gray-50 cursor-pointer">
             <span class="flex items-center gap-2 min-w-0">
-              <input type="checkbox" class="h-um-check" data-id="${u.id}" data-jumlah="${u.jumlah}" onchange="HPP._onUMToggle()"/>
+              <input type="checkbox" class="h-um-check" data-id="${u.id}" data-jumlah="${u.jumlah}" ${this._selectedUM.has(u.id) ? 'checked' : ''} onchange="HPP._onUMToggle()"/>
               <span class="truncate">${App.formatDate(u.tanggal)} — ${u.deskripsi||'-'}</span>
             </span>
             <span class="font-semibold text-money whitespace-nowrap">${App.formatRupiah(u.jumlah)}</span>
@@ -579,6 +665,103 @@ const HPP = {
     await this._load();
   },
 
+  async saveEdit(batchId) {
+    const date = document.getElementById('h-date').value;
+    if (!date) { App.toast('Tanggal beli wajib diisi.', 'warning'); return; }
+    const batchNo = document.getElementById('h-batch').value.trim() || null;
+    const source  = document.getElementById('h-source').value;
+    const rate    = +document.getElementById('h-rate').value || 0;
+
+    const items = [];
+    for (const id of this._rowIds) {
+      const name = document.getElementById(`h-name-${id}`).value.trim();
+      const qty  = +document.getElementById(`h-qty-${id}`).value || 0;
+      const mode = document.getElementById(`h-mode-${id}`).value || 'total';
+
+      const price       = +document.getElementById(`h-price-${id}`).value       || 0;
+      const ship        = +document.getElementById(`h-ship-${id}`).value        || 0;
+      const totalHarga  = +document.getElementById(`h-totalharga-${id}`).value  || 0;
+      const totalOngkir = +document.getElementById(`h-totalongkir-${id}`).value || 0;
+
+      const hasHarga = mode === 'manual' ? !!price : !!totalHarga;
+      if (!name || !qty || !hasHarga) continue;
+
+      const sku   = document.getElementById(`h-sku-${id}`).value.trim() || null;
+      const freebieOn = !!document.getElementById(`h-freebie-toggle-${id}`).checked;
+      const freebieName   = freebieOn ? (document.getElementById(`h-freebie-name-${id}`).value.trim() || null) : null;
+      const freebieSource = freebieOn ? document.getElementById(`h-freebie-source-${id}`).value : null;
+      const freebiePrice  = freebieOn ? (+document.getElementById(`h-freebie-price-${id}`).value || 0) : 0;
+
+      const { pricePerUnit, shipPerUnit, perUnit, total } = this._computeRow({ mode, source, rate, qty, price, ship, totalHarga, totalOngkir, freebieOn, freebieSource, freebiePrice });
+
+      items.push({
+        sku, product_name: name, qty,
+        price_unit: pricePerUnit, shipping_unit: shipPerUnit,
+        freebie_name: freebieName, freebie_source: freebieSource,
+        freebie_price_unit: freebiePrice,
+        cost_per_unit: perUnit, total_cost: total,
+      });
+    }
+    if (!items.length) { App.toast('Minimal 1 produk (nama, qty, harga) harus diisi lengkap.', 'warning'); return; }
+
+    const { error: batchErr } = await App.db()
+      .from('hpp_batches')
+      .update({ purchase_date: date, batch_no: batchNo, source, yuan_rate: rate })
+      .eq('id', batchId);
+    if (batchErr) { App.toast('Error: ' + batchErr.message, 'error'); return; }
+
+    // Reconcile hpp_items: item lama tidak punya identitas/histori independen di luar
+    // batch-nya, jadi cara paling aman adalah hapus semua lalu insert ulang set baru.
+    const { error: delErr } = await App.db().from('hpp_items').delete().eq('batch_id', batchId);
+    if (delErr) { App.toast('Error: ' + delErr.message, 'error'); return; }
+
+    const { error: itemErr } = await App.db()
+      .from('hpp_items')
+      .insert(items.map(it => ({ ...it, batch_id: batchId })));
+    if (itemErr) { App.toast('Error: ' + itemErr.message, 'error'); return; }
+
+    // Auto-registrasi SKU baru ke stok_awal, sama seperti save().
+    const newSkuRows = items
+      .filter(it => it.sku)
+      .map(it => ({ sku: it.sku, product_name: it.product_name || it.sku, qty: 0, hidden: false, updated_at: new Date().toISOString() }));
+    if (newSkuRows.length) {
+      await App.db().from('stok_awal').upsert(newSkuRows, { onConflict: 'sku', ignoreDuplicates: true });
+    }
+
+    // Reconcile tautan Uang Muka: lepas yang sebelumnya ter-link ke batch ini tapi
+    // sudah tidak dipilih lagi, lalu link ulang semua yang terpilih sekarang.
+    const selectedIds = Array.from(this._selectedUM);
+    const previouslyLinked = this._umData.filter(u => u.hpp_batch_id === batchId).map(u => u.id);
+    const toUnlink = previouslyLinked.filter(uid => !selectedIds.includes(uid));
+    let umWarning = '';
+
+    if (toUnlink.length) {
+      const { error: unlinkErr } = await App.db()
+        .from('uang_muka_pembelian')
+        .update({ terpakai: false, hpp_batch_id: null })
+        .in('id', toUnlink);
+      if (unlinkErr) { App.toast('Batch tersimpan, tapi gagal lepas tautan Uang Muka lama: ' + unlinkErr.message, 'error'); }
+    }
+    if (selectedIds.length) {
+      const umTotal = this._umData
+        .filter(u => selectedIds.includes(u.id))
+        .reduce((s, u) => s + (+u.jumlah || 0), 0);
+      const batchTotalCost = items.reduce((s, it) => s + it.total_cost, 0);
+      if (umTotal > batchTotalCost) {
+        umWarning = ` Peringatan: Uang Muka terpilih (${App.formatRupiah(umTotal)}) melebihi Total HPP batch ini (${App.formatRupiah(batchTotalCost)}).`;
+      }
+      const { error: linkErr } = await App.db()
+        .from('uang_muka_pembelian')
+        .update({ terpakai: true, hpp_batch_id: batchId })
+        .in('id', selectedIds);
+      if (linkErr) { App.toast('Batch tersimpan, tapi gagal link Uang Muka: ' + linkErr.message, 'error'); }
+    }
+
+    App.closeModal();
+    App.toast('Perubahan batch disimpan!' + umWarning, umWarning ? 'warning' : 'success');
+    await this._load();
+  },
+
   async delete(batchId) {
     const ok = await App.confirm('Hapus batch pembelian ini beserta semua produknya?');
     if (!ok) return;
@@ -636,6 +819,9 @@ const HPP = {
     const rows = data.map(r => {
       const batch = r.hpp_batches;
       const batchLabel = batch ? (batch.batch_no || App.formatDate(batch.purchase_date)) : '-';
+      const editBtn = `<button onclick="HPP.openFormUM('${r.id}')" class="text-gray-300 hover:text-blue-500 transition-colors mr-2" title="Edit">
+             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+           </button>`;
       const actionBtn = r.terpakai
         ? `<button onclick="HPP._unlinkUM('${r.id}')" class="text-gray-300 hover:text-amber-500 transition-colors" title="Lepas Tautan dari Batch">
              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 01-5.656-5.656l1.5-1.5M10.172 13.828a4 4 0 010-5.656l3-3a4 4 0 015.656 5.656l-1.5 1.5"/></svg>
@@ -649,7 +835,7 @@ const HPP = {
         <td class="text-right font-semibold text-money">${App.formatRupiah(r.jumlah)}</td>
         <td>${r.terpakai ? `<span class="badge badge-green">Terpakai</span>` : `<span class="badge badge-yellow">Belum Terpakai</span>`}</td>
         <td class="text-xs text-gray-500">${batchLabel}</td>
-        <td>${actionBtn}</td>
+        <td class="whitespace-nowrap">${editBtn}${actionBtn}</td>
       </tr>`;
     }).join('');
     el.innerHTML = `
@@ -661,30 +847,48 @@ const HPP = {
     </div>`;
   },
 
-  openAddUM() {
+  openFormUM(id) {
+    const r = id ? this._umData.find(u => u.id === id) : null;
+    const batchLabel = r && r.hpp_batches ? (r.hpp_batches.batch_no || App.formatDate(r.hpp_batches.purchase_date)) : '';
+    const warning = r && r.terpakai
+      ? `<p class="text-xs text-amber-600 mt-3 font-medium">⚠ Uang Muka ini sudah ter-link ke batch pembelian${batchLabel ? ` "${batchLabel}"` : ''}. Mengubah jumlahnya akan memengaruhi perhitungan HPP batch tersebut — Anda akan diminta konfirmasi lagi saat menyimpan.</p>`
+      : `<p class="text-xs text-gray-400 mt-3">Jumlah ini langsung mengurangi Saldo BCA saat disimpan, seperti pengeluaran Operasional. Nanti saat barang sampai dan HPP-nya diinput, Uang Muka ini bisa dipilih di form Tambah Pembelian supaya tidak kepotong Saldo BCA dua kali.</p>`;
     App.openModal({
-      title: 'Tambah Uang Muka Pembelian',
+      title: r ? 'Edit Uang Muka Pembelian' : 'Tambah Uang Muka Pembelian',
       body: `
       <div class="space-y-4">
-        <div><label class="label">Tanggal Bayar *</label><input id="um-date" type="date" class="input" value="${App.todayISO()}"/></div>
-        <div><label class="label">Deskripsi / Nama Barang *</label><input id="um-desc" class="input" placeholder="Mis. DP Batch Sarung Tangan Motor Maret"/></div>
-        <div><label class="label">Jumlah Dibayar (Rp) *</label><input id="um-jumlah" type="number" class="input" placeholder="0"/></div>
+        <div><label class="label">Tanggal Bayar *</label><input id="um-date" type="date" class="input" value="${r ? r.tanggal : App.todayISO()}"/></div>
+        <div><label class="label">Deskripsi / Nama Barang *</label><input id="um-desc" class="input" placeholder="Mis. DP Batch Sarung Tangan Motor Maret" value="${r ? (r.deskripsi||'') : ''}"/></div>
+        <div><label class="label">Jumlah Dibayar (Rp) *</label><input id="um-jumlah" type="number" class="input" placeholder="0" value="${r ? r.jumlah : ''}"/></div>
       </div>
-      <p class="text-xs text-gray-400 mt-3">Jumlah ini langsung mengurangi Saldo BCA saat disimpan, seperti pengeluaran Operasional. Nanti saat barang sampai dan HPP-nya diinput, Uang Muka ini bisa dipilih di form Tambah Pembelian supaya tidak kepotong Saldo BCA dua kali.</p>`,
+      ${warning}`,
       footer: `<button onclick="App.closeModal()" class="btn-secondary">Batal</button>
-               <button onclick="HPP.saveUM()" class="btn-primary">Simpan</button>`,
+               <button onclick="HPP.saveUM(${r ? `'${r.id}'` : ''})" class="btn-primary">Simpan</button>`,
     });
   },
 
-  async saveUM() {
+  async saveUM(id) {
     const tanggal = document.getElementById('um-date').value;
     const desc    = document.getElementById('um-desc').value.trim();
     const jumlah  = +document.getElementById('um-jumlah').value || 0;
     if (!tanggal || !desc || !jumlah) { App.toast('Tanggal, deskripsi, dan jumlah wajib diisi.', 'warning'); return; }
-    const { error } = await App.db().from('uang_muka_pembelian').insert({ tanggal, deskripsi: desc, jumlah, terpakai: false });
-    if (error) { App.toast('Error: ' + error.message, 'error'); return; }
-    App.closeModal();
-    App.toast('Uang Muka disimpan!', 'success');
+
+    if (id) {
+      const existing = this._umData.find(u => u.id === id);
+      if (existing && existing.terpakai) {
+        const ok = await App.confirm('Uang Muka ini sudah terpakai/ter-link ke batch pembelian dan memengaruhi perhitungan HPP batch tersebut. Yakin simpan perubahan?');
+        if (!ok) return;
+      }
+      const { error } = await App.db().from('uang_muka_pembelian').update({ tanggal, deskripsi: desc, jumlah }).eq('id', id);
+      if (error) { App.toast('Error: ' + error.message, 'error'); return; }
+      App.closeModal();
+      App.toast('Uang Muka diperbarui!', 'success');
+    } else {
+      const { error } = await App.db().from('uang_muka_pembelian').insert({ tanggal, deskripsi: desc, jumlah, terpakai: false });
+      if (error) { App.toast('Error: ' + error.message, 'error'); return; }
+      App.closeModal();
+      App.toast('Uang Muka disimpan!', 'success');
+    }
     await this._load();
   },
 

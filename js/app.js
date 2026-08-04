@@ -274,7 +274,7 @@ const App = {
         ? 'px-2.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-100 rounded-full text-xs font-medium'
         : 'px-2.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-100 rounded-full text-xs font-medium';
 
-    // Admin hanya lihat menu Dashboard, Penjualan, Scanner Packing, Stok di sidebar.
+    // Admin hanya lihat menu sesuai ADMIN_ALLOWED_PAGES di sidebar.
     document.querySelectorAll('.nav-item').forEach(el => {
       const allowed = role === 'owner' || this.ADMIN_ALLOWED_PAGES.includes(el.dataset.page);
       el.classList.toggle('hidden', !allowed);
@@ -555,7 +555,7 @@ const App = {
   },
 
   // Halaman yang boleh diakses role Admin — selain ini otomatis dialihkan ke Dashboard.
-  ADMIN_ALLOWED_PAGES: ['dashboard', 'penjualan', 'scanner', 'stok', 'operasional'],
+  ADMIN_ALLOWED_PAGES: ['dashboard', 'penjualan', 'scanner', 'stok', 'operasional', 'hpp'],
 
   _updateClock() {
     const el = document.getElementById('current-datetime');
