@@ -783,6 +783,45 @@ alter table ads_expenses add column if not exists cc_dibayar boolean not null de
 alter table ads_expenses add column if not exists cc_tanggal_bayar date;
 
 -- ═══════════════════════════════════════════════════════
+--  MIGRASI v21 — Order Import Log (Rekap Harian per file import,
+--  bukan per created_at)
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- Rekap Harian harus menghitung pesanan berdasarkan FILE YANG DIIMPORT PADA
+-- HARI ITU, bukan created_at baris orders. Tanpa ini, pesanan lama yang
+-- sempat tertahan di Shopee dan baru muncul lagi di file Import Harian
+-- beberapa hari kemudian ikut di-skip sebagai duplikat (order_no sudah ada
+-- di orders) sehingga tidak pernah terhitung di Rekap Harian tanggal
+-- pengiriman ulangnya — padahal paketnya benar-benar dikirim hari itu.
+-- Tabel ini mencatat SETIAP kemunculan order_no di tiap file import
+-- (termasuk yang di-skip karena sudah ada di orders), per tanggal & jenis
+-- import, supaya Rekap Harian bisa query "pesanan apa saja yang ada di file
+-- import hari ini" secara independen dari created_at.
+create table if not exists order_import_log (
+  id             uuid primary key default gen_random_uuid(),
+  order_no       text not null,
+  tanggal_import date not null,
+  jenis_import   text not null,  -- 'harian' | 'mingguan' | 'retur' | 'income'
+  created_at     timestamptz default now(),
+  unique (order_no, tanggal_import, jenis_import)
+);
+
+create index if not exists order_import_log_tanggal_jenis_idx on order_import_log(tanggal_import, jenis_import);
+create index if not exists order_import_log_order_no_idx     on order_import_log(order_no);
+
+-- ── Backfill data historis — supaya Rekap Harian hari-hari sebelumnya
+--    (sebelum fitur ini ada) tidak jadi kosong. Pakai created_at::date
+--    sebagai tanggal_import karena itulah tanggal pesanan-pesanan lama
+--    dulu tercatat masuk sistem (setara "tanggal import" untuk data lama).
+--    ON CONFLICT DO NOTHING supaya aman dijalankan berkali-kali.
+insert into order_import_log (order_no, tanggal_import, jenis_import)
+select distinct order_no, created_at::date, 'harian'
+from orders
+where order_no is not null and order_no <> '' and created_at is not null
+on conflict (order_no, tanggal_import, jenis_import) do nothing;
+
+-- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup
 --  Untuk production, gunakan Supabase Auth + RLS policies.
 --  Untuk sementara (anon key): disable RLS di table settings.

@@ -69,6 +69,13 @@ const Dashboard = {
       ]);
       if (e1 || e2 || e3 || e4 || e5 || e6 || e7 || e8 || e9 || e10 || e11 || e12) throw new Error((e1||e2||e3||e4||e5||e6||e7||e8||e9||e10||e11||e12).message);
 
+      // order_import_log (MIGRASI v21) — query terpisah dari Promise.all di atas dan TIDAK
+      // ikut throw kalau error, supaya Dashboard tetap jalan kalau migrasinya belum dijalankan
+      // (KPI "Dikirim Hari Ini" otomatis fallback ke created_at, lihat di bawah).
+      const { data: importLogData } = await db.from('order_import_log')
+        .select('order_no, tanggal_import').eq('jenis_import', 'harian');
+      const importLog = importLogData || [];
+
       const settings  = await App.getSettings();
       const modalAwalBca    = parseFloat(settings.modal_awal_bca || 0);
       const modalAwalShopee = parseFloat(settings.modal_awal_shopee || 0);
@@ -221,7 +228,16 @@ const Dashboard = {
       const gagal     = monthOrders.filter(o => o.status === 'Gagal Kirim');
       const retur     = monthOrders.filter(o => o.status === 'Dikembalikan');
       const diproses  = monthOrders.filter(o => o.status === 'Diproses');
-      const diprosesHariIni = diproses.filter(o => (o.created_at || '').slice(0, 10) === today);
+
+      // "Dikirim Hari Ini" ikut sumber Rekap Harian (order_import_log, MIGRASI v21) supaya
+      // konsisten: order_no yang muncul di file Import Harian hari ini dihitung hari ini,
+      // bukan berdasarkan created_at. order_no yang tidak pernah tercatat di log (mis. pesanan
+      // Manual/Offline) fallback ke created_at seperti sebelumnya.
+      const loggedOrderNos = new Set(importLog.map(l => l.order_no));
+      const loggedToday    = new Set(importLog.filter(l => l.tanggal_import === today).map(l => l.order_no));
+      const diprosesHariIni = diproses.filter(o => o.order_no && loggedOrderNos.has(o.order_no)
+        ? loggedToday.has(o.order_no)
+        : (o.created_at || '').slice(0, 10) === today);
 
       // Omzet: LANGSUNG dari tabel orders, berbasis order_date (kapan pesanan dibuat) —
       // BUKAN release_date/income_releases (kapan dana Shopee cair). release_date bisa

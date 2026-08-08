@@ -9,6 +9,7 @@
 const Penjualan = {
   _tab: 'semua',
   _orders: [],
+  _importLog: [],
   _filter: { status: '', q: '', dateFrom: '', dateTo: '' },
   _harianDate: '',
 
@@ -16,6 +17,7 @@ const Penjualan = {
     const el = document.getElementById('page-penjualan');
     el.innerHTML = `<div class="p-8 text-center text-gray-400 text-sm">Memuat data pesanan...</div>`;
     await this._loadOrders();
+    await this._loadImportLog();
     // Default periode = bulan berjalan (bukan all-time) supaya data antar bulan tidak tercampur.
     const now = new Date();
     const { dateFrom, dateTo } = App.monthRange(now.getMonth() + 1, now.getFullYear());
@@ -128,6 +130,17 @@ const Penjualan = {
     const { data, error } = await App.db().from('orders').select('*').order('order_date', { ascending: false });
     if (error) { App.toast('Gagal memuat data pesanan.', 'error'); return; }
     this._orders = data || [];
+  },
+
+  // Riwayat kemunculan order_no di tiap file Import Harian (lihat MIGRASI v21) — dipakai
+  // Rekap Harian supaya berbasis "muncul di file import tanggal X", bukan created_at.
+  // Gagal diam-diam (mis. migrasi belum dijalankan) supaya halaman Penjualan tetap jalan;
+  // Rekap Harian otomatis fallback ke created_at untuk order_no yang tidak pernah tercatat di log.
+  async _loadImportLog() {
+    const { data, error } = await App.db().from('order_import_log')
+      .select('order_no, tanggal_import')
+      .eq('jenis_import', 'harian');
+    this._importLog = error ? [] : (data || []);
   },
 
   _updateReviewBadge() {
@@ -386,10 +399,23 @@ const Penjualan = {
     prevD.setDate(prevD.getDate() - 1);
     const prev = prevD.toISOString().slice(0, 10);
 
+    // Sumber Rekap Harian = order_import_log (kapan order_no MUNCUL DI FILE Import Harian),
+    // bukan created_at. Ini yang membuat pesanan lama yang baru bisa dikirim & muncul lagi
+    // di file import hari ini tetap terhitung hari ini, bukan di-skip sebagai duplikat.
+    // order_no yang tidak pernah tercatat di log (mis. pesanan Manual/Offline yang tidak
+    // pernah lewat Import Harian) fallback ke created_at supaya tetap tampil seperti biasa.
+    const loggedOrderNos = new Set(this._importLog.map(l => l.order_no));
+    const logNosOn = date => new Set(this._importLog.filter(l => l.tanggal_import === date).map(l => l.order_no));
+    const selLogNos  = logNosOn(sel);
+    const prevLogNos = logNosOn(prev);
+
     // Exclude Batal: pesanan lama yang baru masuk sistem via Import Mingguan
     // (batal sebelum sempat dikirim) tidak boleh mengacaukan hitungan Rekap Harian.
-    const dayAll  = this._orders.filter(o => (o.created_at || '').slice(0, 10) === sel  && o.status !== 'Batal');
-    const prevAll = this._orders.filter(o => (o.created_at || '').slice(0, 10) === prev && o.status !== 'Batal');
+    const belongsTo = (o, date, logNos) => o.order_no && loggedOrderNos.has(o.order_no)
+      ? logNos.has(o.order_no)
+      : (o.created_at || '').slice(0, 10) === date;
+    const dayAll  = this._orders.filter(o => o.status !== 'Batal' && belongsTo(o, sel,  selLogNos));
+    const prevAll = this._orders.filter(o => o.status !== 'Batal' && belongsTo(o, prev, prevLogNos));
 
     // Total Pesanan = unique order_no
     const uniqueNos = new Set(dayAll.map(o  => o.order_no || o.id));
@@ -996,6 +1022,28 @@ const Penjualan = {
         if (insertError) throw new Error(`Gagal insert: ${insertError.message}${insertError.details ? ' — ' + insertError.details : ''} (kode: ${insertError.code || '-'})`);
       }
 
+      // ── Catat SEMUA order_no yang ada di file ke order_import_log (harian only) — TERMASUK
+      // yang di-skip karena sudah ada di orders (lihat records "not found" vs "sudah ada").
+      // Ini yang membuat Rekap Harian bisa menghitung berdasarkan "muncul di file import hari
+      // ini", bukan created_at: pesanan lama yang baru bisa dikirim & muncul lagi di file hari
+      // ini tetap tercatat pada tanggal_import HARI INI, meski baris orders-nya tidak berubah.
+      let importLogWarning = false;
+      if (mode === 'harian') {
+        const todayImport = App.todayISO();
+        const allOrderNos = [...new Set(rows.map(r => col(r, 'No. Pesanan', 'No Pesanan', 'Order ID')).filter(Boolean))];
+        if (allOrderNos.length) {
+          prog.textContent = 'Mencatat log import harian...';
+          const logRows = allOrderNos.map(order_no => ({ order_no, tanggal_import: todayImport, jenis_import: 'harian' }));
+          const LOG_BATCH = 500;
+          for (let i = 0; i < logRows.length; i += LOG_BATCH) {
+            const chunk = logRows.slice(i, i + LOG_BATCH);
+            const { error: logErr } = await App.db().from('order_import_log')
+              .upsert(chunk, { onConflict: 'order_no,tanggal_import,jenis_import', ignoreDuplicates: true });
+            if (logErr) { importLogWarning = true; break; }
+          }
+        }
+      }
+
       // ── Update status yang berubah (mingguan only, batch 100 order_no per request)
       let totalUpdated = 0;
       if (mode === 'mingguan') {
@@ -1053,6 +1101,10 @@ const Penjualan = {
               ${nBatal    ? `<p><span class="font-medium text-gray-500">Batal:</span> ${nBatal}</p>` : ''}
               ${nReview   ? `<p class="text-orange-600 font-semibold">Paket Hilang: ${nReview}</p>` : ''}
             </div>`}
+            ${importLogWarning ? `
+            <div class="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
+              <strong>Migrasi v21 belum dijalankan</strong> — Rekap Harian belum bisa menghitung berdasarkan tanggal file import (tabel <code>order_import_log</code> belum ada).
+            </div>` : ''}
             <p class="text-xs text-gray-500 pt-1">Total Omzet baru: ${App.formatRupiah(totalOmzet)}</p>
             ${unrecognizedHtml}
           </div>`;
@@ -1086,6 +1138,7 @@ const Penjualan = {
       prog.classList.add('hidden');
 
       await this._loadOrders();
+      if (mode === 'harian') await this._loadImportLog();
       this._renderTab();
       this._updateReviewBadge();
 
