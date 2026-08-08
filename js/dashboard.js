@@ -54,7 +54,7 @@ const Dashboard = {
         { data: uangMuka, error: e11 },
         { data: penyesuaianShopee, error: e12 },
       ] = await Promise.all([
-        db.from('orders').select('order_no,status,created_at,order_date,qty,sku,source,selling_price,metode_bayar'),
+        db.from('orders').select('id,order_no,status,created_at,order_date,qty,sku,source,selling_price,metode_bayar'),
         db.from('hpp_items').select('sku,cost_per_unit,total_cost,created_at').order('created_at', { ascending: false }),
         db.from('ads').select('cost,ad_date,sumber_bayar,sudah_potong_income,cc_dibayar'),
         db.from('operational').select('cost,op_date'),
@@ -89,6 +89,11 @@ const Dashboard = {
       const today     = App.todayISO();
       const all       = orders || [];
       const sum       = (arr, key) => arr.reduce((s, r) => s + (+r[key] || 0), 0);
+      // KPI status pesanan (Dikirim Hari Ini, Total Diproses, Berhasil, dst.) satuannya
+      // pesanan, bukan baris — satu order_no bisa punya beberapa baris SKU (mis. bundling
+      // "Any 2 at Rp250.000"). Hitung order_no unik, bukan .length array baris. Baris tanpa
+      // order_no (pesanan Manual/Offline lama) dianggap pesanan sendiri via fallback ke id.
+      const countPesanan = arr => new Set(arr.map(o => o.order_no || o.id)).size;
 
       const hppMap = {};
       (hppData || []).forEach(r => {
@@ -280,7 +285,7 @@ const Dashboard = {
       const labaB     = netRev - totalExp;
 
       const scans     = (scanToday || []).filter(s => !s.is_cancelled);
-      const returnRate = selesai.length > 0 ? (retur.length / selesai.length * 100).toFixed(1) : '0.0';
+      const returnRate = countPesanan(selesai) > 0 ? (countPesanan(retur) / countPesanan(selesai) * 100).toFixed(1) : '0.0';
 
       // Tren omzet harian untuk bulan yang dipilih — berbasis order_date, sama seperti
       // kartu Omzet/Net Diterima di atas. Omzet: langsung dari tiap baris omzetOrders.
@@ -343,12 +348,12 @@ const Dashboard = {
 
       <!-- Row 2: Order Status -->
       <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 mb-5">
-        ${this._miniCard('Dikirim Hari Ini', diprosesHariIni.length, 'bg-blue-50 border-blue-100', 'text-blue-700')}
-        ${this._miniCard('Total Diproses', diproses.length, 'bg-indigo-50 border-indigo-100', 'text-indigo-700')}
-        ${this._miniCard('Berhasil', selesai.length, 'bg-green-50 border-green-100', 'text-green-700')}
-        ${this._miniCard('Dibatalkan', batal.length, 'bg-gray-50 border-gray-200', 'text-gray-600')}
-        ${this._miniCard('Gagal Kirim', gagal.length, 'bg-red-50 border-red-100', 'text-red-700')}
-        ${this._miniCard('Retur/Rusak', retur.length, 'bg-orange-50 border-orange-100', 'text-orange-700')}
+        ${this._miniCard('Dikirim Hari Ini', countPesanan(diprosesHariIni), 'bg-blue-50 border-blue-100', 'text-blue-700')}
+        ${this._miniCard('Total Diproses', countPesanan(diproses), 'bg-indigo-50 border-indigo-100', 'text-indigo-700')}
+        ${this._miniCard('Berhasil', countPesanan(selesai), 'bg-green-50 border-green-100', 'text-green-700')}
+        ${this._miniCard('Dibatalkan', countPesanan(batal), 'bg-gray-50 border-gray-200', 'text-gray-600')}
+        ${this._miniCard('Gagal Kirim', countPesanan(gagal), 'bg-red-50 border-red-100', 'text-red-700')}
+        ${this._miniCard('Retur/Rusak', countPesanan(retur), 'bg-orange-50 border-orange-100', 'text-orange-700')}
         ${this._miniCard('Return Rate', returnRate + '%', 'bg-purple-50 border-purple-100', 'text-purple-700')}
       </div>
 
@@ -403,7 +408,7 @@ const Dashboard = {
 
       if (!isAdmin) {
         this._initChartRevenue(days, dailyMap);
-        this._initChartStatus(selesai.length, batal.length, gagal.length, retur.length);
+        this._initChartStatus(countPesanan(selesai), countPesanan(batal), countPesanan(gagal), countPesanan(retur));
       }
     } catch (err) {
       console.error(err);
