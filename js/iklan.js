@@ -478,9 +478,14 @@ const Iklan = {
             <td class="text-right text-gray-500">${App.formatNumber(r.clicks||0)}</td>
             <td class="text-right">${App.formatNumber(r.orders_count||0)}</td>
             <td class="text-right text-xs text-money">${cpo > 0 ? App.formatRupiah(cpo) : '-'}</td>
-            <td><button onclick="Iklan.delete('${r.id}')" class="text-gray-300 hover:text-red-500 transition-colors">
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-            </button></td>
+            <td class="whitespace-nowrap">
+              <button onclick="Iklan.openEdit('${r.id}')" class="text-gray-300 hover:text-blue-500 transition-colors mr-2" title="Edit">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+              </button>
+              <button onclick="Iklan.delete('${r.id}')" class="text-gray-300 hover:text-red-500 transition-colors" title="Hapus">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+              </button>
+            </td>
           </tr>`;
         }).join('')}</tbody>
       </table>
@@ -540,6 +545,73 @@ const Iklan = {
     if (error) { App.toast('Error: ' + error.message, 'error'); return; }
     App.closeModal();
     App.toast('Biaya iklan disimpan!', 'success');
+    await this._refreshAfterCcChange();
+  },
+
+  openEdit(id) {
+    const r = this._data.find(x => x.id === id);
+    if (!r) { App.toast('Data iklan tidak ditemukan.', 'error'); return; }
+    const platforms = ['Shopee Ads', 'Meta (FB/IG)', 'TikTok', 'Google', 'Twitter/X', 'Lainnya'];
+    const sumberOptions = ['Kartu Kredit', 'Saldo BCA', 'Saldo Shopee'];
+    App.openModal({
+      title: 'Edit Biaya Iklan',
+      body: `
+      <div class="grid grid-cols-2 gap-4">
+        <div><label class="label">Tanggal *</label><input id="ike-date" type="date" class="input" value="${r.ad_date || ''}"/></div>
+        <div><label class="label">Platform *</label>
+          <select id="ike-platform" class="input">
+            ${platforms.map(p => `<option ${r.platform === p ? 'selected' : ''}>${p}</option>`).join('')}
+          </select>
+        </div>
+        <div class="col-span-2"><label class="label">Nama Kampanye</label><input id="ike-campaign" class="input" placeholder="Opsional" value="${r.campaign_name || ''}"/></div>
+        <div><label class="label">Biaya (Rp) *</label><input id="ike-cost" type="number" class="input" placeholder="0" value="${r.cost || ''}"/></div>
+        <div><label class="label">Sumber Pembayaran *</label>
+          <select id="ike-sumber" class="input" onchange="Iklan._toggleSudahPotongVisibility('ike-sumber','ike-sudah-potong-wrap')">
+            ${sumberOptions.map(s => `<option ${(r.sumber_bayar || 'Kartu Kredit') === s ? 'selected' : ''}>${s}</option>`).join('')}
+          </select>
+        </div>
+        <div><label class="label">Impresi</label><input id="ike-impressions" type="number" class="input" placeholder="0" value="${r.impressions || ''}"/></div>
+        <div><label class="label">Klik</label><input id="ike-clicks" type="number" class="input" placeholder="0" value="${r.clicks || ''}"/></div>
+        <div><label class="label">Order</label><input id="ike-orders" type="number" class="input" placeholder="0" value="${r.orders_count || ''}"/></div>
+        <div class="col-span-2"><label class="label">Catatan</label><input id="ike-notes" class="input" placeholder="Opsional" value="${r.notes || ''}"/></div>
+        <div id="ike-sudah-potong-wrap" class="col-span-2 hidden bg-amber-50 border border-amber-100 rounded-lg p-3">
+          <label class="flex items-start gap-2 text-sm text-gray-700">
+            <input id="ike-sudah-potong" type="checkbox" class="mt-0.5" ${r.sudah_potong_income ? 'checked' : ''}/>
+            <span>Sudah otomatis terpotong lewat Income Shopee — jangan kurangi Saldo Shopee lagi</span>
+          </label>
+          <p class="text-xs text-gray-500 mt-1 ml-6">Centang HANYA untuk Isi Ulang Saldo Iklan Otomatis yang nilainya sudah ikut mengurangi net_amount per pesanan di file Income/Penghasilan (biasanya muncul di laporan Saldo Shopee sebagai tipe transaksi "Pembayaran dengan Saldo Penjual"). Biaya tetap dicatat penuh di Laba Rugi — centang ini hanya mencegah Saldo Shopee dikurangi dua kali. JANGAN centang untuk iklan yang benar-benar dibayar terpisah dari Income (mis. top up manual lewat transfer terpisah).</p>
+        </div>
+      </div>`,
+      footer: `<button onclick="App.closeModal()" class="btn-secondary">Batal</button>
+               <button onclick="Iklan.saveEdit('${id}')" class="btn-primary">Simpan Perubahan</button>`,
+    });
+    this._toggleSudahPotongVisibility('ike-sumber', 'ike-sudah-potong-wrap');
+  },
+
+  // Update (bukan insert baru). sumber_bayar boleh diganti bebas — Saldo BCA/Saldo Shopee di
+  // Dashboard dihitung ulang dari data ads terkini tiap kali dimuat (lihat totalAdsBcaAllTime/
+  // totalAdsShopeeAllTime di js/dashboard.js), jadi perubahan sumber_bayar di sini otomatis
+  // tercermin dengan benar tanpa perlu penyesuaian manual tambahan.
+  async saveEdit(id) {
+    const cost = +document.getElementById('ike-cost').value || 0;
+    if (!cost) { App.toast('Biaya wajib diisi.', 'warning'); return; }
+    const sumber = document.getElementById('ike-sumber').value;
+    const payload = {
+      ad_date:       document.getElementById('ike-date').value,
+      platform:      document.getElementById('ike-platform').value,
+      campaign_name: document.getElementById('ike-campaign').value.trim() || null,
+      cost,
+      sumber_bayar:  sumber,
+      sudah_potong_income: sumber === 'Saldo Shopee' && !!document.getElementById('ike-sudah-potong')?.checked,
+      impressions:   +document.getElementById('ike-impressions').value || 0,
+      clicks:        +document.getElementById('ike-clicks').value || 0,
+      orders_count:  +document.getElementById('ike-orders').value || 0,
+      notes:         document.getElementById('ike-notes').value.trim() || null,
+    };
+    const { error } = await App.db().from('ads').update(payload).eq('id', id);
+    if (error) { App.toast('Error: ' + error.message, 'error'); return; }
+    App.closeModal();
+    App.toast('Perubahan disimpan!', 'success');
     await this._refreshAfterCcChange();
   },
 
