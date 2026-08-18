@@ -1022,18 +1022,20 @@ const Penjualan = {
         if (insertError) throw new Error(`Gagal insert: ${insertError.message}${insertError.details ? ' — ' + insertError.details : ''} (kode: ${insertError.code || '-'})`);
       }
 
-      // ── Catat SEMUA order_no yang ada di file ke order_import_log (harian only) — TERMASUK
-      // yang di-skip karena sudah ada di orders (lihat records "not found" vs "sudah ada").
-      // Ini yang membuat Rekap Harian bisa menghitung berdasarkan "muncul di file import hari
-      // ini", bukan created_at: pesanan lama yang baru bisa dikirim & muncul lagi di file hari
-      // ini tetap tercatat pada tanggal_import HARI INI, meski baris orders-nya tidak berubah.
+      // ── Catat SEMUA order_no yang ada di file ke order_import_log (harian & mingguan) —
+      // TERMASUK yang di-skip karena sudah ada di orders (lihat records "not found" vs "sudah
+      // ada"). Ini yang membuat Rekap Harian bisa menghitung berdasarkan "muncul di file import
+      // hari ini", bukan created_at: pesanan lama yang baru bisa dikirim & muncul lagi di file
+      // hari ini tetap tercatat pada tanggal_import HARI INI, meski baris orders-nya tidak
+      // berubah. Untuk mingguan, log ini juga yang dibaca panel "Status Import" di Dashboard
+      // supaya Owner tahu kapan terakhir kali Import Mingguan dijalankan.
       let importLogWarning = false;
-      if (mode === 'harian') {
+      if (mode === 'harian' || mode === 'mingguan') {
         const todayImport = App.todayISO();
         const allOrderNos = [...new Set(rows.map(r => col(r, 'No. Pesanan', 'No Pesanan', 'Order ID')).filter(Boolean))];
         if (allOrderNos.length) {
-          prog.textContent = 'Mencatat log import harian...';
-          const logRows = allOrderNos.map(order_no => ({ order_no, tanggal_import: todayImport, jenis_import: 'harian' }));
+          prog.textContent = `Mencatat log import ${mode}...`;
+          const logRows = allOrderNos.map(order_no => ({ order_no, tanggal_import: todayImport, jenis_import: mode }));
           const LOG_BATCH = 500;
           for (let i = 0; i < logRows.length; i += LOG_BATCH) {
             const chunk = logRows.slice(i, i + LOG_BATCH);
@@ -1128,6 +1130,10 @@ const Penjualan = {
               <p>Dilewati (status di file sama dengan di database): <strong>${orderNosSame.size}</strong> pesanan</p>
               <p>Tidak ditemukan di database (pesanan baru — Import Mingguan tidak menambahkannya, lihat catatan fitur): <strong>${orderNosNotFound.size}</strong> pesanan</p>
             </div>
+            ${importLogWarning ? `
+            <div class="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
+              <strong>Migrasi v21 belum dijalankan</strong> — panel Status Import di Dashboard belum bisa mencatat Import Mingguan (tabel <code>order_import_log</code> belum ada).
+            </div>` : ''}
             ${unrecognizedHtml}
           </div>`;
         App.toast(`Import Mingguan: ${orderNosUpdated.size} status diperbarui`, 'success');
@@ -1409,6 +1415,22 @@ const Penjualan = {
         else if (rec.status === 'Gagal Kirim')  nGagal++;
         else if (rec.status === 'Retur')        nRetur++;
         if (rec.stok_action === 'menunggu_barang_kembali') nReview++;
+      }
+
+      // ── Catat semua order_no dari file retur ke order_import_log (jenis_import='retur') —
+      // dipakai panel "Status Import" di Dashboard supaya Owner tahu kapan terakhir kali
+      // Import Retur dijalankan. Best-effort: kalau gagal (mis. migrasi v21 belum jalan),
+      // tidak menggagalkan proses retur yang sudah berhasil di atas.
+      if (allNos.length) {
+        prog.textContent = 'Mencatat log import retur...';
+        const logRows = allNos.map(order_no => ({ order_no, tanggal_import: today, jenis_import: 'retur' }));
+        const LOG_BATCH = 500;
+        for (let i = 0; i < logRows.length; i += LOG_BATCH) {
+          const chunk = logRows.slice(i, i + LOG_BATCH);
+          const { error: logErr } = await App.db().from('order_import_log')
+            .upsert(chunk, { onConflict: 'order_no,tanggal_import,jenis_import', ignoreDuplicates: true });
+          if (logErr) break;
+        }
       }
 
       res.innerHTML = `
@@ -1743,6 +1765,21 @@ const Penjualan = {
             .in('id', chunk);
           if (updErr) throw new Error(`Gagal menandai income_matched_at: ${updErr.message}`);
           ordersMatched += chunk.length;
+        }
+
+        // ── Catat semua order_no dari file Income ke order_import_log (jenis_import='income') —
+        // dipakai panel "Status Import" di Dashboard supaya Owner tahu kapan terakhir kali
+        // Import Income dijalankan. Best-effort: kalau gagal, tidak menggagalkan proses
+        // Income yang sudah berhasil di atas.
+        prog.textContent = 'Mencatat log import income...';
+        const todayImport = App.todayISO();
+        const logRows = releases.map(r => ({ order_no: r.order_no, tanggal_import: todayImport, jenis_import: 'income' }));
+        const LOG_BATCH = 500;
+        for (let i = 0; i < logRows.length; i += LOG_BATCH) {
+          const chunk = logRows.slice(i, i + LOG_BATCH);
+          const { error: logErr } = await App.db().from('order_import_log')
+            .upsert(chunk, { onConflict: 'order_no,tanggal_import,jenis_import', ignoreDuplicates: true });
+          if (logErr) break;
         }
       }
 

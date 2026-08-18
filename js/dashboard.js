@@ -59,7 +59,7 @@ const Dashboard = {
         db.from('ads').select('cost,ad_date,sumber_bayar,sudah_potong_income,cc_dibayar'),
         db.from('operational').select('cost,op_date'),
         db.from('scan_logs').select('id,expedition,is_cancelled,scan_date').eq('scan_date', App.todayISO()),
-        db.from('income_releases').select('order_no,gross_amount,discount,voucher_seller,net_amount,release_date'),
+        db.from('income_releases').select('order_no,gross_amount,discount,voucher_seller,net_amount,release_date,created_at'),
         db.from('ads_expenses').select('biaya,month,year,sumber_bayar,sudah_potong_income,cc_dibayar'),
         db.from('kas_pribadi').select('tipe,jumlah'),
         db.from('hutang_pembayaran').select('sumber_kas_bisnis'),
@@ -71,10 +71,19 @@ const Dashboard = {
 
       // order_import_log (MIGRASI v21) — query terpisah dari Promise.all di atas dan TIDAK
       // ikut throw kalau error, supaya Dashboard tetap jalan kalau migrasinya belum dijalankan
-      // (KPI "Dikirim Hari Ini" otomatis fallback ke created_at, lihat di bawah).
-      const { data: importLogData } = await db.from('order_import_log')
-        .select('order_no, tanggal_import').eq('jenis_import', 'harian');
-      const importLog = importLogData || [];
+      // (KPI "Dikirim Hari Ini" otomatis fallback ke created_at, lihat di bawah). Semua
+      // jenis_import diambil sekaligus (bukan cuma 'harian') supaya bisa dipakai juga oleh
+      // panel "Status Import" di bawah.
+      const { data: importLogAllData } = await db.from('order_import_log')
+        .select('order_no, tanggal_import, jenis_import');
+      const importLogAll = importLogAllData || [];
+      const importLog = importLogAll.filter(l => l.jenis_import === 'harian');
+
+      // Fallback untuk panel "Status Import": kalau jenis_import 'retur' belum pernah tercatat
+      // di order_import_log (mis. sebelum fitur pencatatan retur ini ada), pakai created_at
+      // terbaru dari tabel returns. Best-effort — tabel ini opsional/legacy di sebagian setup.
+      const { data: lastReturnRow } = await db.from('returns')
+        .select('created_at').order('created_at', { ascending: false }).limit(1).maybeSingle();
 
       const settings  = await App.getSettings();
       const modalAwalBca    = parseFloat(settings.modal_awal_bca || 0);
@@ -329,7 +338,55 @@ const Dashboard = {
     // pengeluaran) dan grafik tren disembunyikan, termasuk dari Owner-only Row 1/3/Rincian.
     const isAdmin = App.isAdmin();
 
+    // ── Panel "Status Import" — kapan terakhir kali tiap jenis import dijalankan, supaya
+    // Owner langsung sadar kalau ada jenis import yang lupa/belum dijalankan (mis. Mingguan
+    // terlewat berminggu-minggu bikin status pesanan di Dashboard jadi tidak akurat tanpa
+    // disadari). Sumber utama: order_import_log (semua jenis_import, all-time, tidak ikut
+    // filter bulan/tahun di atas). Kalau suatu jenis belum pernah tercatat di sana (mis.
+    // sebelum fitur pencatatannya ada), fallback ke created_at terbaru tabel terkait —
+    // income_releases untuk Income, returns untuk Retur. Harian & Mingguan tidak punya
+    // fallback tabel lain yang relevan: kalau tidak ada di log, memang belum pernah dijalankan.
+    const lastImportByType = {};
+    importLogAll.forEach(l => {
+      if (!l.tanggal_import || !l.jenis_import) return;
+      if (!lastImportByType[l.jenis_import] || l.tanggal_import > lastImportByType[l.jenis_import]) {
+        lastImportByType[l.jenis_import] = l.tanggal_import;
+      }
+    });
+    if (!lastImportByType.retur && lastReturnRow?.created_at) {
+      lastImportByType.retur = String(lastReturnRow.created_at).slice(0, 10);
+    }
+    if (!lastImportByType.income && allReleases.length) {
+      const lastIncomeCreated = allReleases.reduce((max, r) => (r.created_at && r.created_at > max) ? r.created_at : max, '');
+      if (lastIncomeCreated) lastImportByType.income = lastIncomeCreated.slice(0, 10);
+    }
+    const msPerDay  = 24 * 60 * 60 * 1000;
+    const todayDate = new Date(`${today}T00:00:00`);
+    const importStatus = [
+      { key: 'harian',   label: 'Import Harian' },
+      { key: 'mingguan', label: 'Import Mingguan' },
+      { key: 'retur',    label: 'Import Retur' },
+      { key: 'income',   label: 'Import Income' },
+    ].map(t => {
+      const lastDate = lastImportByType[t.key] || null;
+      const days = lastDate ? Math.max(0, Math.round((todayDate - new Date(`${lastDate}T00:00:00`)) / msPerDay)) : null;
+      const color = days === null ? 'red' : days < 7 ? 'green' : days <= 14 ? 'yellow' : 'red';
+      return { ...t, lastDate, days, color };
+    });
+    const mingguanStatus  = importStatus.find(s => s.key === 'mingguan');
+    const mingguanStale   = mingguanStatus.days === null || mingguanStatus.days > 7;
+
     el.innerHTML = `
+      <!-- Status Import -->
+      <div class="card mb-4">
+        <div class="card-header mb-3">
+          <span class="card-title">Status Import</span>
+        </div>
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          ${importStatus.map(s => this._importStatusCard(s)).join('')}
+        </div>
+      </div>
+
       ${isAdmin ? '' : `
       <!-- Row 1: Financial -->
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
@@ -345,6 +402,11 @@ const Dashboard = {
         ${this._bigCard('Saldo BCA', App.formatRupiah(saldoBCA), 'Modal Awal + Penarikan - HPP/Ops/Prive/Hutang/UangMuka - Iklan (Saldo BCA + Kartu Kredit yang sudah dibayar) + Manual/Offline metode Transfer BCA (all-time, Iklan Kartu Kredit belum dibayar/Saldo Shopee & Manual Tunai dikecualikan)', 'bg-indigo-50','text-indigo-600','M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z')}
         ${this._bigCard('Sisa Kas', App.formatRupiah(sisaKas), 'Saldo Shopee + Saldo BCA (total gabungan)', sisaKas>=0?'bg-sky-50':'bg-red-50', sisaKas>=0?'text-sky-600':'text-red-600','M9 8h6m-5 4h4m1 8H8a2 2 0 01-2-2V6a2 2 0 012-2h4.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V18a2 2 0 01-2 2z')}
       </div>`}
+
+      ${mingguanStale ? `
+      <div class="mb-4 p-3 rounded-lg bg-red-50 border border-red-100 text-sm text-red-700 font-medium">
+        ⚠️ Status pesanan mungkin belum akurat — Import Mingguan ${mingguanStatus.days === null ? 'belum pernah dijalankan' : `terakhir ${mingguanStatus.days} hari lalu`}.
+      </div>` : ''}
 
       <!-- Row 2: Order Status -->
       <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 mb-5">
@@ -415,6 +477,19 @@ const Dashboard = {
       App.toast('Gagal memuat dashboard: ' + err.message, 'error');
       el.innerHTML = `<div class="card text-red-600 text-sm p-6">Gagal memuat dashboard: ${err.message}</div>`;
     }
+  },
+
+  _importStatusCard(s) {
+    const badgeClass = { green: 'badge-green', yellow: 'badge-yellow', red: 'badge-red' }[s.color];
+    const text = s.days === null ? 'Belum pernah' : s.days === 0 ? 'Hari ini' : `${s.days} hari lalu`;
+    const sub  = s.lastDate ? App.formatDate(s.lastDate) : '-';
+    return `<div class="stat-card border border-gray-100">
+      <p class="stat-label">${s.label}</p>
+      <div class="flex items-center gap-2 mt-1">
+        <span class="badge ${badgeClass}">${text}</span>
+      </div>
+      <p class="stat-sub mt-1">${sub}</p>
+    </div>`;
   },
 
   _bigCard(title, value, sub, bg, tc, path) {
