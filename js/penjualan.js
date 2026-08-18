@@ -961,14 +961,16 @@ const Penjualan = {
       // kasus ini seperti pesanan "Diproses" biasa — dikumpulkan di sini utk ditampilkan
       // sebagai peringatan "Konflik Status" yang harus dikoreksi manual oleh Owner.
       //
-      // TAPI: hanya untuk pesanan yang "Waktu Pesanan Dibuat"-nya masih dalam 14 hari
+      // TAPI: hanya untuk pesanan yang "Waktu Pesanan Dibuat"-nya masih dalam 30 hari
       // terakhir dari tanggal import. Kalau Owner mengimport file Order_toship LAMA (mis.
       // rentang bulan lalu), pesanan-pesanan tua yang statusnya sudah final (dari Import
       // Mingguan sebelumnya) ikut muncul lagi di file itu — itu BUKAN konflik sungguhan
       // (bukan pesanan hidup lagi), cuma sisa data lama di file. Pesanan tanpa tanggal yang
-      // bisa diparse dianggap TIDAK dalam 14 hari (diabaikan) — lebih aman drpd salah tampil.
+      // bisa diparse dianggap TIDAK dalam 30 hari (diabaikan) — lebih aman drpd salah tampil.
+      // Cutoff dinaikkan dari 14 → 30 hari setelah kasus nyata pesanan 260802AA3JUXUK
+      // (umur 16 hari, memang konflik sungguhan) terlewat oleh cutoff 14 hari.
       const FINAL_CONFLICT_STATUSES = ['Batal', 'Gagal Kirim', 'Retur'];
-      const CONFLICT_MAX_AGE_DAYS   = 14;
+      const CONFLICT_MAX_AGE_DAYS   = 30;
       const conflictTodayDate       = new Date(`${App.todayISO()}T00:00:00`);
       const isWithinConflictWindow  = (dateStr) => {
         if (!dateStr) return false;
@@ -1159,7 +1161,7 @@ const Penjualan = {
                 </tbody>
               </table>
             </div>
-            <p class="text-xs text-red-400 mt-2">Hanya menampilkan pesanan dari 14 hari terakhir. Pesanan lebih lama diabaikan karena kemungkinan berasal dari file lama.</p>
+            <p class="text-xs text-red-400 mt-2">Hanya menampilkan pesanan dari 30 hari terakhir. Pesanan lebih lama diabaikan karena kemungkinan berasal dari file lama.</p>
           </div>` : '';
 
         res.innerHTML = `
