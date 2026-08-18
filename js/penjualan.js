@@ -960,7 +960,21 @@ const Penjualan = {
       // salah (pesanan hidup lagi / sempat salah dicatat). Harian tidak boleh diam-diam skip
       // kasus ini seperti pesanan "Diproses" biasa — dikumpulkan di sini utk ditampilkan
       // sebagai peringatan "Konflik Status" yang harus dikoreksi manual oleh Owner.
+      //
+      // TAPI: hanya untuk pesanan yang "Waktu Pesanan Dibuat"-nya masih dalam 14 hari
+      // terakhir dari tanggal import. Kalau Owner mengimport file Order_toship LAMA (mis.
+      // rentang bulan lalu), pesanan-pesanan tua yang statusnya sudah final (dari Import
+      // Mingguan sebelumnya) ikut muncul lagi di file itu — itu BUKAN konflik sungguhan
+      // (bukan pesanan hidup lagi), cuma sisa data lama di file. Pesanan tanpa tanggal yang
+      // bisa diparse dianggap TIDAK dalam 14 hari (diabaikan) — lebih aman drpd salah tampil.
       const FINAL_CONFLICT_STATUSES = ['Batal', 'Gagal Kirim', 'Retur'];
+      const CONFLICT_MAX_AGE_DAYS   = 14;
+      const conflictTodayDate       = new Date(`${App.todayISO()}T00:00:00`);
+      const isWithinConflictWindow  = (dateStr) => {
+        if (!dateStr) return false;
+        const diffDays = Math.round((conflictTodayDate - new Date(`${dateStr}T00:00:00`)) / (24 * 60 * 60 * 1000));
+        return diffDays >= 0 && diffDays <= CONFLICT_MAX_AGE_DAYS;
+      };
       const statusConflictMap = new Map(); // order_no → { dbStatus, ids: Set<id> }
 
       for (const r of records) {
@@ -988,7 +1002,7 @@ const Penjualan = {
         // untuk pesanan yang sudah ada adalah MENDETEKSI konflik status final di atas.
         if (mode === 'harian') {
           const conflictRows = matches.filter(m => FINAL_CONFLICT_STATUSES.includes(m.status));
-          if (conflictRows.length) {
+          if (conflictRows.length && isWithinConflictWindow(r.order_date)) {
             if (!statusConflictMap.has(r.order_no)) {
               statusConflictMap.set(r.order_no, { dbStatus: conflictRows[0].status, ids: new Set() });
             }
@@ -1145,6 +1159,7 @@ const Penjualan = {
                 </tbody>
               </table>
             </div>
+            <p class="text-xs text-red-400 mt-2">Hanya menampilkan pesanan dari 14 hari terakhir. Pesanan lebih lama diabaikan karena kemungkinan berasal dari file lama.</p>
           </div>` : '';
 
         res.innerHTML = `
