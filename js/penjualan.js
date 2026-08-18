@@ -928,22 +928,22 @@ const Penjualan = {
       // ini, baris tsb dianggap "tidak ditemukan" dan statusnya gagal terupdate.
       const norm = v => String(v || '').trim().toLowerCase();
       const orderNos = [...new Set(records.map(r => r.order_no))];
-      const existingByKey   = new Map(); // "order_no||sku" (normalized) → { status }
-      const existingByOrder = new Map(); // order_no (normalized) → [{ sku, status }]
+      const existingByKey   = new Map(); // "order_no||sku" (normalized) → { id, status }
+      const existingByOrder = new Map(); // order_no (normalized) → [{ id, sku, status }]
       const BATCH = 100;
       for (let i = 0; i < orderNos.length; i += BATCH) {
         const chunk = orderNos.slice(i, i + BATCH);
         prog.textContent = `Mengecek database... (${Math.min(i + BATCH, orderNos.length)}/${orderNos.length})`;
         const { data: existing, error: fetchErr } = await App.db()
           .from('orders')
-          .select('order_no, sku, status')
+          .select('id, order_no, sku, status')
           .in('order_no', chunk);
         if (fetchErr) throw new Error(`Gagal cek database: ${fetchErr.message}${fetchErr.details ? ' — ' + fetchErr.details : ''}`);
         (existing || []).forEach(o => {
           const ordKey = norm(o.order_no);
-          existingByKey.set(`${ordKey}||${norm(o.sku)}`, { status: o.status });
+          existingByKey.set(`${ordKey}||${norm(o.sku)}`, { id: o.id, status: o.status });
           if (!existingByOrder.has(ordKey)) existingByOrder.set(ordKey, []);
-          existingByOrder.get(ordKey).push({ sku: o.sku, status: o.status });
+          existingByOrder.get(ordKey).push({ id: o.id, sku: o.sku, status: o.status });
         });
       }
 
@@ -955,6 +955,29 @@ const Penjualan = {
       const orderNosUpdated  = new Set();
       const orderNosSame     = new Set();
       const orderNosNotFound = new Set();
+      // Harian only — pesanan yang SUDAH ADA di database tapi berstatus final (Batal/Gagal
+      // Kirim/Retur) dan MUNCUL LAGI di file Perlu Dikirim: kemungkinan status di database
+      // salah (pesanan hidup lagi / sempat salah dicatat). Harian tidak boleh diam-diam skip
+      // kasus ini seperti pesanan "Diproses" biasa — dikumpulkan di sini utk ditampilkan
+      // sebagai peringatan "Konflik Status" yang harus dikoreksi manual oleh Owner.
+      //
+      // TAPI: hanya untuk pesanan yang "Waktu Pesanan Dibuat"-nya masih dalam 30 hari
+      // terakhir dari tanggal import. Kalau Owner mengimport file Order_toship LAMA (mis.
+      // rentang bulan lalu), pesanan-pesanan tua yang statusnya sudah final (dari Import
+      // Mingguan sebelumnya) ikut muncul lagi di file itu — itu BUKAN konflik sungguhan
+      // (bukan pesanan hidup lagi), cuma sisa data lama di file. Pesanan tanpa tanggal yang
+      // bisa diparse dianggap TIDAK dalam 30 hari (diabaikan) — lebih aman drpd salah tampil.
+      // Cutoff dinaikkan dari 14 → 30 hari setelah kasus nyata pesanan 260802AA3JUXUK
+      // (umur 16 hari, memang konflik sungguhan) terlewat oleh cutoff 14 hari.
+      const FINAL_CONFLICT_STATUSES = ['Batal', 'Gagal Kirim', 'Retur'];
+      const CONFLICT_MAX_AGE_DAYS   = 30;
+      const conflictTodayDate       = new Date(`${App.todayISO()}T00:00:00`);
+      const isWithinConflictWindow  = (dateStr) => {
+        if (!dateStr) return false;
+        const diffDays = Math.round((conflictTodayDate - new Date(`${dateStr}T00:00:00`)) / (24 * 60 * 60 * 1000));
+        return diffDays >= 0 && diffDays <= CONFLICT_MAX_AGE_DAYS;
+      };
+      const statusConflictMap = new Map(); // order_no → { dbStatus, ids: Set<id> }
 
       for (const r of records) {
         const exactKey = `${norm(r.order_no)}||${norm(r.sku)}`;
@@ -975,6 +998,22 @@ const Penjualan = {
           continue;
         }
 
+        // Harian TIDAK PERNAH mengubah pesanan yang sudah ada (hanya insert baru — lihat
+        // "Insert baru (harian only...)" di bawah) — status/stok pesanan lama diperbarui
+        // lewat Import Mingguan/Retur, bukan di sini. Satu-satunya hal yang Harian lakukan
+        // untuk pesanan yang sudah ada adalah MENDETEKSI konflik status final di atas.
+        if (mode === 'harian') {
+          const conflictRows = matches.filter(m => FINAL_CONFLICT_STATUSES.includes(m.status));
+          if (conflictRows.length && isWithinConflictWindow(r.order_date)) {
+            if (!statusConflictMap.has(r.order_no)) {
+              statusConflictMap.set(r.order_no, { dbStatus: conflictRows[0].status, ids: new Set() });
+            }
+            const entry = statusConflictMap.get(r.order_no);
+            conflictRows.forEach(m => entry.ids.add(m.id));
+          }
+          continue;
+        }
+
         const needsUpdate = matches.some(m => m.status !== r.status);
         if (!needsUpdate) {
           orderNosSame.add(r.order_no);
@@ -991,6 +1030,10 @@ const Penjualan = {
         toUpdateGroups[groupKey].orderNos.add(r.order_no);
         orderNosUpdated.add(r.order_no);
       }
+
+      const statusConflicts = [...statusConflictMap.entries()].map(([order_no, v]) => ({
+        order_no, dbStatus: v.dbStatus, ids: [...v.ids],
+      }));
 
       // ── Insert baru (harian only, batch 200)
       let migrationWarning = false;
@@ -1088,6 +1131,39 @@ const Penjualan = {
         const nBatal     = countByStatus('Batal');
         const totalOmzet = toInsert.reduce((s, r) => s + r.gross_revenue, 0);
         const nReview    = toInsert.filter(r => r.stok_action === 'sudah_keluar_tidak_balik').length;
+
+        // Simpan di instance supaya tombol "Koreksi ke Diproses" (onclick, dirender sebagai
+        // HTML string) bisa mengambil id baris yang tepat lewat index — tidak menyisipkan
+        // order_no mentah ke atribut onclick supaya aman dari karakter aneh di file Excel.
+        this._lastStatusConflicts = statusConflicts;
+        const conflictHtml = statusConflicts.length ? `
+          <div class="mt-3 p-3 rounded-lg bg-red-50 border border-red-200">
+            <p class="font-semibold text-red-700 text-xs mb-2">⚠️ ${statusConflicts.length} pesanan bermasalah: ada di file Perlu Dikirim, tapi di sistem berstatus Batal/Gagal Kirim/Retur. Status ini kemungkinan salah.</p>
+            <div class="overflow-x-auto">
+              <table class="w-full text-xs">
+                <thead><tr class="text-left text-gray-500 border-b border-red-100">
+                  <th class="py-1 pr-2">No. Pesanan</th>
+                  <th class="py-1 pr-2">Status di Sistem</th>
+                  <th class="py-1"></th>
+                </tr></thead>
+                <tbody>
+                  ${statusConflicts.map((c, idx) => `
+                  <tr id="conflict-row-${idx}" class="border-b border-red-50 last:border-0">
+                    <td class="py-1.5 pr-2 font-mono">${c.order_no}</td>
+                    <td class="py-1.5 pr-2"><span class="badge badge-red">${c.dbStatus}</span></td>
+                    <td class="py-1.5 text-right">
+                      <button onclick="Penjualan.koreksiStatusKonflik(${idx})"
+                              class="text-xs px-2 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium whitespace-nowrap">
+                        Koreksi ke Diproses
+                      </button>
+                    </td>
+                  </tr>`).join('')}
+                </tbody>
+              </table>
+            </div>
+            <p class="text-xs text-red-400 mt-2">Hanya menampilkan pesanan dari 30 hari terakhir. Pesanan lebih lama diabaikan karena kemungkinan berasal dari file lama.</p>
+          </div>` : '';
+
         res.innerHTML = `
           <div class="space-y-1">
             <p class="font-semibold text-green-700">Import Harian selesai!</p>
@@ -1108,6 +1184,7 @@ const Penjualan = {
               <strong>Migrasi v21 belum dijalankan</strong> — Rekap Harian belum bisa menghitung berdasarkan tanggal file import (tabel <code>order_import_log</code> belum ada).
             </div>` : ''}
             <p class="text-xs text-gray-500 pt-1">Total Omzet baru: ${App.formatRupiah(totalOmzet)}</p>
+            ${conflictHtml}
             ${unrecognizedHtml}
           </div>`;
         App.toast(`Import Harian: ${toInsert.length} pesanan baru`, 'success');
@@ -1163,6 +1240,33 @@ const Penjualan = {
       res.className = 'mt-3 p-3 rounded-lg bg-red-50 border border-red-100 text-sm';
       res.classList.remove('hidden');
     }
+  },
+
+  // Dipanggil dari tombol "Koreksi ke Diproses" pada tabel Konflik Status hasil Import
+  // Harian (lihat statusConflicts di importPesananFile). idx = index ke this._lastStatusConflicts
+  // yang disimpan saat import terakhir dijalankan — bukan order_no mentah, supaya aman dari
+  // karakter aneh yang mungkin ada di file Excel.
+  async koreksiStatusKonflik(idx) {
+    const entry = (this._lastStatusConflicts || [])[idx];
+    if (!entry) return;
+
+    const ok = await App.confirm(
+      `Koreksi status pesanan ${entry.order_no} dari "${entry.dbStatus}" menjadi "Diproses"?\nStok akan disesuaikan (dianggap keluar/terjual).`
+    );
+    if (!ok) return;
+
+    const { error } = await App.db().from('orders')
+      .update({ status: 'Diproses', stok_action: 'keluar' })
+      .in('id', entry.ids);
+    if (error) { App.toast('Gagal koreksi: ' + error.message, 'error'); return; }
+
+    App.toast(`Status pesanan ${entry.order_no} dikoreksi ke Diproses.`, 'success');
+    const row = document.getElementById(`conflict-row-${idx}`);
+    if (row) row.remove();
+
+    await this._loadOrders();
+    this._renderTab();
+    this._updateReviewBadge();
   },
 
   /* ═══════════════════════════════════════════════
@@ -1252,6 +1356,7 @@ const Penjualan = {
             qty:           this._toNum(this._col(r, 'Jumlah', 'Qty', 'Quantity')) || 1,
             status:        'Batal',
             stok_action:   'tidak_berubah',
+            order_date:    this._toDate(this._col(r, 'Waktu Pesanan Dibuat', 'Tanggal Pesanan', 'Order Date')) || null,
           });
         }
       }
@@ -1272,6 +1377,7 @@ const Penjualan = {
             qty:           this._toNum(this._col(r, 'Jumlah', 'Qty', 'Quantity')) || 1,
             status:        'Gagal Kirim',
             stok_action:   'menunggu_barang_kembali',
+            order_date:    this._toDate(this._col(r, 'Waktu Pesanan Dibuat', 'Tanggal Pesanan', 'Order Date')) || null,
           });
         }
       }
@@ -1297,6 +1403,7 @@ const Penjualan = {
             status:        returDibatalkan ? 'Selesai' : 'Retur',
             stok_action:   returDibatalkan ? 'keluar' : 'menunggu_barang_kembali',
             returDibatalkan,
+            order_date:    this._toDate(this._col(r, 'Waktu Pesanan Dibuat', 'Tanggal Pesanan', 'Order Date')) || null,
           });
         }
       }
@@ -1389,9 +1496,14 @@ const Penjualan = {
           }
         } else {
           // Pesanan BELUM ADA sama sekali → insert baru, created_at pakai default now().
+          // order_date HARUS dari kolom "Waktu Pesanan Dibuat" di file retur (rec.order_date,
+          // sudah diparse saat baca slot 1/2/3 di atas) supaya konsisten dengan tanggal pesanan
+          // asli dari Shopee — bukan tanggal import — karena Laba Rugi & laporan per periode
+          // dihitung berdasarkan order_date. Fallback ke tanggal import HANYA kalau file retur
+          // ini benar-benar tidak punya kolom tanggal pesanan (jarang terjadi).
           const { data: inserted, error } = await App.db().from('orders').insert({
             order_no:      rec.order_no,
-            order_date:    today,
+            order_date:    rec.order_date || today,
             product_name:  rec.product_name || '-',
             sku:           rec.sku || null,
             qty:           rec.qty || 1,
@@ -2026,7 +2138,13 @@ const Penjualan = {
             .select('id').eq('order_no', orderNo).eq('sku', r.sku).maybeSingle();
           if (findError) throw findError;
           if (existing) {
-            const { error } = await App.db().from('orders').update(payload).eq('id', existing.id);
+            // Pesanan (order_no+sku) ini SUDAH ADA — jangan timpa order_date-nya. Form "Tambah
+            // Pesanan Manual" ini selalu default ke tanggal HARI INI (bukan tanggal asli
+            // pesanan), jadi kalau dipakai untuk melengkapi baris pada order_no yang kebetulan
+            // sudah ada (mis. menambah SKU yang terlewat import), order_date pesanan yang sudah
+            // ada tidak boleh ikut berubah — cukup field lain (status/harga/dst) yang diupdate.
+            const { order_date, ...updateFields } = payload;
+            const { error } = await App.db().from('orders').update(updateFields).eq('id', existing.id);
             if (error) throw error;
             updated = true;
           }
@@ -2099,7 +2217,11 @@ const Penjualan = {
           .select('id').eq('order_no', payload.order_no).eq('sku', payload.sku).maybeSingle();
         if (findError) throw findError;
         if (existing) {
-          const { error } = await App.db().from('orders').update(payload).eq('id', existing.id);
+          // Sama seperti saveManualMulti: kalau pesanan ini ternyata sudah ada, jangan timpa
+          // order_date-nya dengan tanggal dari form (form "Tambah" ini tidak tahu tanggal asli
+          // pesanan yang sudah ada tsb) — hanya field lain yang diupdate.
+          const { order_date, ...updateFields } = payload;
+          const { error } = await App.db().from('orders').update(updateFields).eq('id', existing.id);
           if (error) throw error;
         } else {
           const { error } = await App.db().from('orders').insert(payload);
