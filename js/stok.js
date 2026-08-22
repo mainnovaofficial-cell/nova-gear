@@ -9,9 +9,13 @@ const Stok = {
   _tab: 'rekap',
   _rowData: {},
   _showHidden: false,
+  _showHiddenRiwayat: false,
+  _riwayatDate: '',
+  _riwayatRaw: null,
 
   async onLoad() {
     const el = document.getElementById('page-stok');
+    this._riwayatRaw = null; // paksa reload data Riwayat Stok saat Refresh ditekan
     el.innerHTML = `
     <div class="page-header">
       <div>
@@ -27,6 +31,7 @@ const Stok = {
     <div class="tabs mb-0">
       <button class="tab-btn active" onclick="Stok._switchTab('rekap', this)">Rekap Stok</button>
       <button class="tab-btn"        onclick="Stok._switchTab('history', this)">History Perubahan</button>
+      <button class="tab-btn"        onclick="Stok._switchTab('riwayat', this)">Riwayat Stok</button>
     </div>
     <div id="stok-content"><div class="skeleton h-40 w-full rounded-xl mt-4"></div></div>`;
     if (!this._menuListenerBound) {
@@ -60,6 +65,7 @@ const Stok = {
   async _render() {
     if (this._tab === 'rekap')   await this._renderRekap();
     if (this._tab === 'history') await this._renderHistory();
+    if (this._tab === 'riwayat') await this._renderRiwayat();
   },
 
   /* ── TAB: REKAP STOK ── */
@@ -344,6 +350,273 @@ const Stok = {
     } catch (err) {
       el.innerHTML = `<div class="card mt-4 p-4 text-red-600 text-sm">Error memuat history: ${err.message}</div>`;
     }
+  },
+
+  /* ── TAB: RIWAYAT STOK ── */
+  // Fitur 1: posisi stok semua SKU per tanggal (kumulatif <= tanggal terpilih).
+  // Fitur 2: klik SKU → pergerakan harian 30 hari terakhir + no. pesanan penyebab keluar.
+  async _renderRiwayat() {
+    const el = document.getElementById('stok-content');
+    el.innerHTML = `<div class="skeleton h-40 w-full rounded-xl mt-4"></div>`;
+
+    try {
+      if (!this._riwayatRaw) await this._loadRiwayatData();
+      if (!this._riwayatDate) this._riwayatDate = App.todayISO();
+      el.innerHTML = this._riwayatShell();
+    } catch (err) {
+      el.innerHTML = `<div class="card mt-4 p-4 text-red-600 text-sm">Error memuat riwayat stok: ${err.message}</div>`;
+    }
+  },
+
+  // Ambil semua data mentah sekali (masuk HPP per tanggal batch, keluar pesanan per
+  // tanggal efektif, penyesuaian manual per tanggal) lalu simpan sebagai flat event list
+  // supaya perhitungan per-tanggal / per-SKU cukup di-filter di client tanpa query ulang.
+  async _loadRiwayatData() {
+    const db = App.db();
+    const [
+      { data: stokAwal   },
+      { data: hppBatches },
+      { data: orders     },
+      { data: adjusts    },
+      { data: importLog  },
+    ] = await Promise.all([
+      db.from('stok_awal').select('sku,product_name,qty,parent_sku,hidden').then(r => r, () => ({ data: [] })),
+      db.from('hpp_batches').select('purchase_date,hpp_items(sku,product_name,qty)'),
+      db.from('orders').select('sku,product_name,qty,stok_action,status,order_no,created_at'),
+      db.from('stok_adjust').select('sku,qty,created_at').then(r => r, () => ({ data: [] })),
+      db.from('order_import_log').select('order_no,tanggal_import').then(r => r, () => ({ data: [] })),
+    ]);
+
+    const normSku = raw => (raw || 'TANPA-SKU').toString().trim().toUpperCase();
+    const parentMap = {};
+    const skuMeta = {};
+    (stokAwal || []).forEach(r => {
+      const sku = normSku(r.sku);
+      skuMeta[sku] = { name: r.product_name || sku, awal: +r.qty || 0, hidden: r.hidden === true };
+      if (r.parent_sku) parentMap[sku] = normSku(r.parent_sku);
+    });
+    const groupKey = sku => parentMap[sku] || sku;
+
+    // Tanggal keluar = min(tanggal_import) dari order_import_log utk order_no tsb
+    // (lintas jenis_import), fallback ke orders.created_at::date kalau order_no
+    // tidak pernah tercatat di log — konsisten dgn pendekatan Rekap Harian.
+    const minImportDate = {};
+    (importLog || []).forEach(l => {
+      if (!l.order_no || !l.tanggal_import) return;
+      if (!minImportDate[l.order_no] || l.tanggal_import < minImportDate[l.order_no]) {
+        minImportDate[l.order_no] = l.tanggal_import;
+      }
+    });
+    const effDate = o => (o.order_no && minImportDate[o.order_no]) ? minImportDate[o.order_no] : (o.created_at || '').slice(0, 10);
+
+    const DEDUCT = new Set(['keluar', 'sudah_keluar_tidak_balik', 'menunggu_barang_kembali']);
+
+    const masukEvents = [];
+    (hppBatches || []).forEach(b => {
+      const tanggal = b.purchase_date || '';
+      (b.hpp_items || []).forEach(r => {
+        const sku = normSku(r.sku);
+        masukEvents.push({ sku, group: groupKey(sku), name: r.product_name, tanggal, qty: +r.qty || 0 });
+      });
+    });
+
+    const keluarEvents = [];
+    (orders || []).forEach(r => {
+      const action = r.stok_action || (r.status === 'Selesai' ? 'keluar' : null);
+      if (!DEDUCT.has(action)) return;
+      const sku = normSku(r.sku);
+      keluarEvents.push({ sku, group: groupKey(sku), name: r.product_name, tanggal: effDate(r), qty: +r.qty || 0, order_no: r.order_no || '(manual)' });
+    });
+
+    const adjustEvents = [];
+    (adjusts || []).forEach(r => {
+      const sku = normSku(r.sku);
+      adjustEvents.push({ sku, group: groupKey(sku), tanggal: (r.created_at || '').slice(0, 10), qty: +r.qty || 0 });
+    });
+
+    this._riwayatRaw = { skuMeta, groupKey, masukEvents, keluarEvents, adjustEvents };
+  },
+
+  _riwayatShell() {
+    const today = App.todayISO();
+    const sel = this._riwayatDate;
+    return `
+    <div class="card mt-4 !py-3">
+      <div class="flex flex-wrap gap-3 items-center">
+        <label class="text-sm font-medium text-gray-600">Posisi stok per tanggal:</label>
+        <input type="date" value="${sel}" max="${today}" class="input w-40 !py-1.5 text-xs"
+               onchange="Stok._setRiwayatDate(this.value)"/>
+        ${sel !== today ? `<button onclick="Stok._setRiwayatDate('${today}')" class="btn-secondary text-xs !py-1.5">Hari Ini</button>` : ''}
+      </div>
+    </div>
+    <div id="riwayat-table">${this._riwayatTableHtml()}</div>`;
+  },
+
+  _setRiwayatDate(d) {
+    this._riwayatDate = d;
+    document.getElementById('riwayat-table').innerHTML = this._riwayatTableHtml();
+  },
+
+  _toggleShowHiddenRiwayat(checked) {
+    this._showHiddenRiwayat = checked;
+    document.getElementById('riwayat-table').innerHTML = this._riwayatTableHtml();
+  },
+
+  // Bangun tabel posisi stok semua SKU per this._riwayatDate (kumulatif, difilter <=).
+  _riwayatTableHtml() {
+    const sel = this._riwayatDate;
+    const { skuMeta, groupKey, masukEvents, keluarEvents, adjustEvents } = this._riwayatRaw;
+
+    const map = {};
+    const ensure = (group, name) => {
+      if (!map[group]) map[group] = { sku: group, name: name || group, awal: 0, masuk: 0, adjust: 0, keluar: 0, members: new Set() };
+      if (name && map[group].name === group) map[group].name = name;
+    };
+
+    Object.entries(skuMeta).forEach(([sku, meta]) => {
+      const group = groupKey(sku);
+      ensure(group, meta.name);
+      map[group].awal += meta.awal;
+      map[group].members.add(sku);
+    });
+    masukEvents.forEach(e => {
+      if (!e.tanggal || e.tanggal > sel) return;
+      ensure(e.group, e.name);
+      map[e.group].masuk += e.qty;
+      map[e.group].members.add(e.sku);
+    });
+    adjustEvents.forEach(e => {
+      if (!e.tanggal || e.tanggal > sel) return;
+      ensure(e.group);
+      map[e.group].adjust += e.qty;
+      map[e.group].members.add(e.sku);
+    });
+    keluarEvents.forEach(e => {
+      if (!e.tanggal || e.tanggal > sel) return;
+      ensure(e.group, e.name);
+      map[e.group].keluar += e.qty;
+      map[e.group].members.add(e.sku);
+    });
+
+    const hiddenSet = new Set(Object.entries(skuMeta).filter(([, m]) => m.hidden).map(([sku]) => sku));
+    const rows = Object.values(map).sort((a, b) => a.sku.localeCompare(b.sku));
+    rows.forEach(r => { r.hidden = [...r.members].every(m => hiddenSet.has(m)); });
+
+    const visibleRows = this._showHiddenRiwayat ? rows : rows.filter(r => !r.hidden);
+    const hiddenCount = rows.filter(r => r.hidden).length;
+
+    if (!visibleRows.length) {
+      return `<div class="empty-state card py-16 mt-4"><p>Belum ada data stok sampai tanggal ini.</p></div>`;
+    }
+
+    const toggleBar = `
+    <div class="flex items-center justify-between mb-3 mt-4">
+      <label class="inline-flex items-center gap-2 text-xs text-gray-600">
+        <input type="checkbox" ${this._showHiddenRiwayat ? 'checked' : ''} onchange="Stok._toggleShowHiddenRiwayat(this.checked)"/>
+        Tampilkan produk tersembunyi ${hiddenCount ? `(${hiddenCount})` : ''}
+      </label>
+    </div>`;
+
+    return toggleBar + `
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead><tr>
+          <th>SKU</th>
+          <th>Nama Produk</th>
+          <th class="text-right">Stok Awal</th>
+          <th class="text-right">Masuk</th>
+          <th class="text-right">Penyesuaian</th>
+          <th class="text-right">Keluar</th>
+          <th class="text-right">Stok Akhir</th>
+        </tr></thead>
+        <tbody>${visibleRows.map(r => {
+          const akhir = r.awal + r.masuk + r.adjust - r.keluar;
+          const escSku = r.sku.replace(/'/g, "\\'");
+          return `<tr class="cursor-pointer ${r.hidden ? 'bg-gray-50' : ''}" onclick="Stok._openPergerakan('${escSku}')">
+            <td class="font-mono text-xs font-semibold text-gray-600">
+              ${r.sku}${r.hidden ? ` <span class="badge badge-gray text-[10px] ml-1">Tersembunyi</span>` : ''}
+            </td>
+            <td class="font-medium">${r.name}</td>
+            <td class="text-right text-gray-500 font-semibold">${App.formatNumber(r.awal)}</td>
+            <td class="text-right text-green-700 font-semibold">${App.formatNumber(r.masuk)}</td>
+            <td class="text-right ${r.adjust >= 0 ? 'text-blue-600' : 'text-orange-600'} font-semibold">${r.adjust > 0 ? '+' : ''}${App.formatNumber(r.adjust)}</td>
+            <td class="text-right text-red-600 font-semibold">${App.formatNumber(r.keluar)}</td>
+            <td class="text-right font-bold text-lg text-money">${App.formatNumber(akhir)}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>
+    <p class="text-xs text-gray-400 mt-2 px-1">
+      Stok Akhir = Stok Awal + Masuk + Penyesuaian − Keluar, dihitung sampai tanggal terpilih.
+      Klik baris SKU untuk melihat pergerakan harian 30 hari terakhir.
+    </p>`;
+  },
+
+  // Fitur 2 — modal pergerakan harian 30 hari terakhir (berakhir di this._riwayatDate) utk satu grup SKU.
+  _openPergerakan(group) {
+    const sel = this._riwayatDate || App.todayISO();
+    const endD = new Date(sel + 'T12:00:00');
+    const days = [];
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(endD);
+      d.setDate(d.getDate() - i);
+      days.push(d.toISOString().slice(0, 10));
+    }
+    const startDate = days[0];
+
+    const { skuMeta, groupKey, masukEvents, keluarEvents, adjustEvents } = this._riwayatRaw;
+    const members = new Set();
+    Object.keys(skuMeta).forEach(sku => { if (groupKey(sku) === group) members.add(sku); });
+    [...masukEvents, ...keluarEvents, ...adjustEvents].forEach(e => { if (e.group === group) members.add(e.sku); });
+
+    let running = 0;
+    Object.entries(skuMeta).forEach(([sku, m]) => { if (groupKey(sku) === group) running += m.awal; });
+    const sumBefore = list => list.filter(e => e.group === group && e.tanggal && e.tanggal < startDate).reduce((s, e) => s + e.qty, 0);
+    running += sumBefore(masukEvents) + sumBefore(adjustEvents) - sumBefore(keluarEvents);
+
+    const meta = skuMeta[group] || { name: group };
+
+    const rows = days.map(d => {
+      const masuk = masukEvents.filter(e => e.group === group && e.tanggal === d).reduce((s, e) => s + e.qty, 0);
+      const keluarList = keluarEvents.filter(e => e.group === group && e.tanggal === d);
+      const keluar = keluarList.reduce((s, e) => s + e.qty, 0);
+      const adjust = adjustEvents.filter(e => e.group === group && e.tanggal === d).reduce((s, e) => s + e.qty, 0);
+      running += masuk + adjust - keluar;
+      return { tanggal: d, masuk, keluar, adjust, akhir: running, orderNos: [...new Set(keluarList.map(e => e.order_no))] };
+    });
+
+    const body = `
+    <p class="text-sm text-gray-500 mb-3">
+      <span class="font-mono">${group}</span>${members.size > 1 ? ` <span class="text-xs text-gray-400">(gabungan: ${[...members].sort().join(', ')})</span>` : ''}
+      — pergerakan 30 hari terakhir sampai ${App.formatDate(sel)}.
+    </p>
+    <div class="table-wrapper" style="max-height:60vh; overflow-y:auto;">
+      <table class="data-table">
+        <thead><tr>
+          <th>Tanggal</th>
+          <th class="text-right text-green-700">Masuk</th>
+          <th class="text-right text-red-600">Keluar</th>
+          <th class="text-right">Penyesuaian</th>
+          <th class="text-right">Stok Akhir</th>
+          <th>No. Pesanan (Keluar)</th>
+        </tr></thead>
+        <tbody>${rows.map(r => `<tr>
+          <td class="whitespace-nowrap text-xs">${App.formatDate(r.tanggal)}</td>
+          <td class="text-right font-semibold ${r.masuk  ? 'text-green-700' : 'text-gray-300'}">${r.masuk  ? '+' + App.formatNumber(r.masuk)  : '—'}</td>
+          <td class="text-right font-semibold ${r.keluar ? 'text-red-600'   : 'text-gray-300'}">${r.keluar ? '−' + App.formatNumber(r.keluar) : '—'}</td>
+          <td class="text-right font-semibold ${r.adjust ? (r.adjust > 0 ? 'text-blue-600' : 'text-orange-600') : 'text-gray-300'}">${r.adjust ? (r.adjust > 0 ? '+' : '') + App.formatNumber(r.adjust) : '—'}</td>
+          <td class="text-right font-bold text-money">${App.formatNumber(r.akhir)}</td>
+          <td class="text-xs text-gray-500 max-w-[220px] truncate" title="${r.orderNos.join(', ')}">${r.orderNos.length ? r.orderNos.join(', ') : '—'}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+
+    App.openModal({
+      title: `Pergerakan Stok — ${meta.name || group}`,
+      body,
+      footer: `<button onclick="App.closeModal()" class="btn-secondary">Tutup</button>`,
+      size: 'max-w-3xl',
+    });
   },
 
   /* ── EDIT STOK AWAL ── */
