@@ -91,7 +91,7 @@ const Stok = {
       // (stok_awal, hpp_items, orders, stok_adjust) selalu cocok satu sama lain —
       // tanpa ini, SKU dengan casing berbeda dianggap produk lain dan tombol Hapus
       // (yang menghapus berdasarkan SKU persis) tidak akan menemukan baris di stok_awal.
-      const normSku = raw => (raw || 'TANPA-SKU').toString().trim().toUpperCase();
+      const normSku = raw => (raw || '').toString().trim().toUpperCase() || 'TANPA-SKU';
 
       // Resolusi SKU varian → Parent SKU (varian dengan stok fisik sama digabung)
       const parentMap = {};
@@ -103,8 +103,11 @@ const Stok = {
       });
       const groupKey = sku => parentMap[sku] || sku;
       // SKU yang tidak punya baris stok_awal sama sekali (hanya tercatat dari HPP/Pesanan)
-      // otomatis tersembunyi.
-      const isHidden = sku => this._skuMeta[sku] ? this._skuMeta[sku].hidden : true;
+      // otomatis tersembunyi. Baris SKU kosong/null di orders (mis. baris "Ongkir" atau
+      // pesanan lama yang SKU-nya gagal terbaca saat import) selalu dianggap tersembunyi —
+      // tidak berguna untuk manajemen stok, meski suatu saat pernah ada baris stok_awal
+      // dengan SKU literal "TANPA-SKU".
+      const isHidden = sku => sku === 'TANPA-SKU' ? true : (this._skuMeta[sku] ? this._skuMeta[sku].hidden : true);
 
       // Group map: { groupKey → { name, awal, masuk, keluar, adjust, members } }
       const map = {};
@@ -387,7 +390,7 @@ const Stok = {
       db.from('order_import_log').select('order_no,tanggal_import').then(r => r, () => ({ data: [] })),
     ]);
 
-    const normSku = raw => (raw || 'TANPA-SKU').toString().trim().toUpperCase();
+    const normSku = raw => (raw || '').toString().trim().toUpperCase() || 'TANPA-SKU';
     const parentMap = {};
     const skuMeta = {};
     (stokAwal || []).forEach(r => {
@@ -498,7 +501,11 @@ const Stok = {
       map[e.group].members.add(e.sku);
     });
 
+    // Baris SKU kosong/null (mis. "Ongkir" atau pesanan lama yang SKU-nya gagal terbaca
+    // saat import) selalu dianggap tersembunyi — data di orders tidak diubah, hanya
+    // disembunyikan dari tampilan Stok.
     const hiddenSet = new Set(Object.entries(skuMeta).filter(([, m]) => m.hidden).map(([sku]) => sku));
+    hiddenSet.add('TANPA-SKU');
     const rows = Object.values(map).sort((a, b) => a.sku.localeCompare(b.sku));
     rows.forEach(r => { r.hidden = [...r.members].every(m => hiddenSet.has(m)); });
 
