@@ -438,6 +438,26 @@ const App = {
     return AppState.supabase;
   },
 
+  // Ambil SEMUA baris lewat pagination .range(), supaya query tidak diam-diam kepotong
+  // row cap default PostgREST/Supabase (biasanya 1000) di tabel besar/terus-tumbuh
+  // (mis. order_import_log, orders). Pakai ini kalau perhitungan butuh SELURUH baris,
+  // bukan cuma beberapa baris teratas/terbawah (yang cukup diamankan pakai .order()+cap
+  // biasa). buildQuery(from, to) harus mengembalikan query builder BARU tiap dipanggil —
+  // query builder Supabase sekali pakai, tidak bisa direuse antar page.
+  async fetchAllRows(buildQuery, pageSize = 1000) {
+    let from = 0;
+    let all  = [];
+    for (;;) {
+      const { data, error } = await buildQuery(from, from + pageSize - 1);
+      if (error) throw error;
+      const rows = data || [];
+      all = all.concat(rows);
+      if (rows.length < pageSize) break;
+      from += pageSize;
+    }
+    return all;
+  },
+
   async _fetchSettings() {
     const { data, error } = await AppState.supabase
       .from('settings')
