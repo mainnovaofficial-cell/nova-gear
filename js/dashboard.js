@@ -115,17 +115,28 @@ const Dashboard = {
       // ikut throw kalau error, supaya Dashboard tetap jalan kalau migrasinya belum dijalankan
       // (KPI "Dikirim Hari Ini" otomatis fallback ke created_at, lihat di bawah). Semua
       // jenis_import diambil sekaligus (bukan cuma 'harian') supaya bisa dipakai juga oleh
-      // panel "Status Import" di bawah. PENTING: .order('tanggal_import', desc) — tabel ini
-      // sudah dibackfill dengan 1 baris per order_no historis (lihat migrasi), jadi total
-      // barisnya bisa jauh melebihi row cap default PostgREST/Supabase (biasanya 1000) tanpa
-      // ORDER BY, hasil query terpotong di baris mana pun tanpa jaminan urutan — bisa saja
-      // baris-baris TERBARU (mis. Import Income hari ini) yang terbuang, bukan yang terlama.
-      // Dengan urut descending, kalau terpotong pun yang hilang justru baris terlama/backfill,
-      // sehingga MAX(tanggal_import) per jenis_import & data hari ini tetap akurat.
-      const { data: importLogAllData } = await db.from('order_import_log')
-        .select('order_no, tanggal_import, jenis_import')
-        .order('tanggal_import', { ascending: false });
-      const importLogAll = importLogAllData || [];
+      // panel "Status Import" di bawah.
+      //
+      // PENTING: pakai App.fetchAllRows() (pagination), BUKAN cuma .order(desc) — tabel ini
+      // sudah lewat row cap default PostgREST/Supabase (per Agustus 2026: 1338 baris vs cap
+      // ~1000). .order('tanggal_import', desc) SAJA ternyata tidak cukup: kalau baris utk
+      // tanggal TERBARU sendiri sudah > sisa slot cap (mis. tanggal terbaru dibagi oleh
+      // beberapa jenis_import sekaligus — harian+mingguan+retur di tanggal yang sama), jenis
+      // import dgn volume kecil (mis. Retur, puluhan baris) bisa TERDESAK HABIS oleh jenis
+      // lain yang volumenya jauh lebih besar (mis. Harian, ratusan baris) di tanggal yang
+      // sama — PostgREST tidak punya secondary sort utk menjamin representasi tiap jenis
+      // tetap ada di antara baris yg selamat. Ini persis bug yang bikin panel Retur & Income
+      // salah tanggal meski Harian/Mingguan (jenis dominan) sudah benar. Pagination
+      // menghilangkan risiko ini sepenuhnya — SELURUH baris selalu terambil.
+      let importLogAll = [];
+      try {
+        importLogAll = await App.fetchAllRows(
+          (from, to) => db.from('order_import_log')
+            .select('order_no, tanggal_import, jenis_import')
+            .order('tanggal_import', { ascending: false })
+            .range(from, to)
+        );
+      } catch (_) { /* migrasi belum dijalankan — best-effort, biarkan Dashboard tetap jalan */ }
       const importLog = importLogAll.filter(l => l.jenis_import === 'harian');
 
       // Fallback untuk panel "Status Import": kalau jenis_import 'retur' belum pernah tercatat
