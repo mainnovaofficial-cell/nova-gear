@@ -77,15 +77,21 @@ const Stok = {
       const db = App.db();
       const [
         { data: hppData  },
-        { data: orders   },
+        orders,
         { data: adjusts  },
         { data: stokAwal },
       ] = await Promise.all([
         db.from('hpp_items').select('sku,product_name,qty'),
-        db.from('orders').select('sku,product_name,qty,stok_action,status'),
+        // Posisi stok = akumulasi SEMUA WAKTU (awal + masuk - keluar + adjust), jadi butuh
+        // SELURUH baris orders, bukan sebagian — App.fetchAllRows() supaya tidak diam-diam
+        // kepotong row cap default PostgREST/Supabase (biasanya 1000 baris) begitu tabelnya
+        // tumbuh besar (lihat catatan yang sama di js/dashboard.js & js/analisis.js).
+        App.fetchAllRows((from, to) => db.from('orders')
+          .select('sku,product_name,qty,stok_action,status').range(from, to)),
         db.from('stok_adjust').select('sku,qty').then(r => r, () => ({ data: [] })),
         db.from('stok_awal').select('sku,product_name,qty,parent_sku,hidden').then(r => r, () => ({ data: [] })),
       ]);
+      App.warnIfRowCap(hppData, 'stok (Rekap Stok): hpp_items');
 
       // Normalisasi SKU (trim + uppercase) supaya SKU yang sama dari sumber berbeda
       // (stok_awal, hpp_items, orders, stok_adjust) selalu cocok satu sama lain —
@@ -381,13 +387,22 @@ const Stok = {
       { data: hppBatches },
       { data: orders     },
       { data: adjusts    },
-      { data: importLog  },
+      importLog,
     ] = await Promise.all([
       db.from('stok_awal').select('sku,product_name,qty,parent_sku,hidden').then(r => r, () => ({ data: [] })),
       db.from('hpp_batches').select('purchase_date,hpp_items(sku,product_name,qty)'),
       db.from('orders').select('sku,product_name,qty,stok_action,status,order_no,created_at'),
       db.from('stok_adjust').select('sku,qty,created_at').then(r => r, () => ({ data: [] })),
-      db.from('order_import_log').select('order_no,tanggal_import').then(r => r, () => ({ data: [] })),
+      // Dipakai utk MIN(tanggal_import) per order_no lintas SELURUH histori (Riwayat Stok
+      // bisa ditanya utk tanggal berapapun di masa lalu), jadi ORDER BY saja tidak cukup —
+      // kalau tabelnya melebihi row cap default PostgREST (biasanya 1000 baris) query biasa
+      // bisa kepotong & diam-diam menghilangkan sebagian order_no dari hasil. Pakai
+      // App.fetchAllRows (pagination lewat .range()) supaya SELURUH baris tetap terambil;
+      // .order() ascending sekadar jaga-jaga tambahan (defense-in-depth), bukan solusi utama.
+      App.fetchAllRows(
+        (from, to) => db.from('order_import_log').select('order_no,tanggal_import')
+          .order('tanggal_import', { ascending: true }).range(from, to)
+      ).catch(() => []),
     ]);
 
     const normSku = raw => (raw || '').toString().trim().toUpperCase() || 'TANPA-SKU';

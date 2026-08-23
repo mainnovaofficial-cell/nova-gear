@@ -126,21 +126,37 @@ const Penjualan = {
     <div id="pj-tab-content"></div>`;
   },
 
+  // Halaman Penjualan bisa cari/edit pesanan dari periode manapun (filter Bulan "Semua",
+  // pencarian no. pesanan) dan Rekap Harian bisa navigasi ke tanggal manapun di masa lalu —
+  // genuinely butuh SELURUH baris orders, bukan cuma satu periode. App.fetchAllRows()
+  // supaya tidak diam-diam kepotong row cap default PostgREST/Supabase (biasanya 1000
+  // baris) begitu tabelnya tumbuh besar.
   async _loadOrders() {
-    const { data, error } = await App.db().from('orders').select('*').order('order_date', { ascending: false });
-    if (error) { App.toast('Gagal memuat data pesanan.', 'error'); return; }
-    this._orders = data || [];
+    try {
+      this._orders = await App.fetchAllRows(
+        (from, to) => App.db().from('orders').select('*').order('order_date', { ascending: false }).range(from, to)
+      );
+    } catch (error) {
+      App.toast('Gagal memuat data pesanan.', 'error');
+    }
   },
 
   // Riwayat kemunculan order_no di tiap file Import Harian (lihat MIGRASI v21) — dipakai
   // Rekap Harian supaya berbasis "muncul di file import tanggal X", bukan created_at.
+  // Rekap Harian bisa ditanya utk tanggal berapapun di masa lalu (prev/next day), jadi
+  // butuh SELURUH baris 'harian', bukan cuma yang terbaru — pakai App.fetchAllRows
+  // (pagination lewat .range()) supaya tidak diam-diam kepotong row cap default
+  // PostgREST (biasanya 1000 baris) kalau histori importnya sudah banyak.
   // Gagal diam-diam (mis. migrasi belum dijalankan) supaya halaman Penjualan tetap jalan;
   // Rekap Harian otomatis fallback ke created_at untuk order_no yang tidak pernah tercatat di log.
   async _loadImportLog() {
-    const { data, error } = await App.db().from('order_import_log')
-      .select('order_no, tanggal_import')
-      .eq('jenis_import', 'harian');
-    this._importLog = error ? [] : (data || []);
+    this._importLog = await App.fetchAllRows(
+      (from, to) => App.db().from('order_import_log')
+        .select('order_no, tanggal_import')
+        .eq('jenis_import', 'harian')
+        .order('tanggal_import', { ascending: true })
+        .range(from, to)
+    ).catch(() => []);
   },
 
   _updateReviewBadge() {
