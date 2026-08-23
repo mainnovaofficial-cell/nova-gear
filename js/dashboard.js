@@ -73,9 +73,16 @@ const Dashboard = {
       // ikut throw kalau error, supaya Dashboard tetap jalan kalau migrasinya belum dijalankan
       // (KPI "Dikirim Hari Ini" otomatis fallback ke created_at, lihat di bawah). Semua
       // jenis_import diambil sekaligus (bukan cuma 'harian') supaya bisa dipakai juga oleh
-      // panel "Status Import" di bawah.
+      // panel "Status Import" di bawah. PENTING: .order('tanggal_import', desc) — tabel ini
+      // sudah dibackfill dengan 1 baris per order_no historis (lihat migrasi), jadi total
+      // barisnya bisa jauh melebihi row cap default PostgREST/Supabase (biasanya 1000) tanpa
+      // ORDER BY, hasil query terpotong di baris mana pun tanpa jaminan urutan — bisa saja
+      // baris-baris TERBARU (mis. Import Income hari ini) yang terbuang, bukan yang terlama.
+      // Dengan urut descending, kalau terpotong pun yang hilang justru baris terlama/backfill,
+      // sehingga MAX(tanggal_import) per jenis_import & data hari ini tetap akurat.
       const { data: importLogAllData } = await db.from('order_import_log')
-        .select('order_no, tanggal_import, jenis_import');
+        .select('order_no, tanggal_import, jenis_import')
+        .order('tanggal_import', { ascending: false });
       const importLogAll = importLogAllData || [];
       const importLog = importLogAll.filter(l => l.jenis_import === 'harian');
 
