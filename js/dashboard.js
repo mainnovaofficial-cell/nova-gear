@@ -40,13 +40,26 @@ const Dashboard = {
 
     try {
       const db = App.db();
+
+      // Rentang tanggal bulan yang dipilih (sama seperti Laba Rugi) — dihitung DI AWAL
+      // (sebelum query orders di bawah) supaya bisa dipakai utk filter SERVER-SIDE
+      // (.gte/.lt), bukan fetch SEMUA orders lalu filter di client. Per Agustus 2026 tabel
+      // orders 733 baris & tumbuh ~250/bulan — fetch tanpa filter akan mulai kepotong row
+      // cap default PostgREST (~1000 baris) dlm 1-2 bulan, bikin Omzet/Laba Rugi diam-diam
+      // salah tanpa error apa pun (persis kelas bug yang sama dgn panel Status Import).
+      const dateFrom  = `${tahun}-${String(bulan).padStart(2, '0')}-01`;
+      const nextMonth = new Date(tahun, bulan, 1); // bulan 1-based → index ini = bulan berikutnya
+      const dateTo    = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
+      const inRange   = (d) => !!d && d >= dateFrom && d < dateTo;
+      const ORDER_COLS = 'id,order_no,status,created_at,order_date,qty,sku,source,selling_price,metode_bayar';
+
       const [
-        { data: orders,    error: e1 },
+        { data: ordersByCreated,   error: e1a },
+        { data: ordersByOrderDate, error: e1b },
         { data: hppData,   error: e2 },
         { data: adsData,   error: e3 },
         { data: opData,    error: e4 },
         { data: scanToday, error: e5 },
-        { data: releases,  error: e6 },
         { data: adsImport, error: e7 },
         { data: kasPribadi, error: e8 },
         { data: hutangBayar, error: e9 },
@@ -54,12 +67,20 @@ const Dashboard = {
         { data: uangMuka, error: e11 },
         { data: penyesuaianShopee, error: e12 },
       ] = await Promise.all([
-        db.from('orders').select('id,order_no,status,created_at,order_date,qty,sku,source,selling_price,metode_bayar'),
+        // Dasar KPI status pesanan (Berhasil/Batal/Gagal/Retur/Diproses/Dikirim Hari Ini) —
+        // difilter server-side by created_at bulan yang dipilih.
+        db.from('orders').select(ORDER_COLS).gte('created_at', dateFrom).lt('created_at', dateTo),
+        // Dasar Omzet/Net Diterima/HPP/tren harian — difilter server-side by order_date
+        // bulan yang dipilih (BUKAN created_at, lihat catatan Omzet di bawah). Exclude Batal
+        // sengaja TIDAK dipindah ke .neq('status','Batal') server-side — NULL status (baris
+        // lama/legacy tanpa status) akan ikut terbuang oleh NULL != 'Batal' di SQL (evaluasi
+        // ke NULL, bukan true), beda dgn JS `o.status !== 'Batal'` yang tetap true utk NULL.
+        // Tetap difilter di client di bawah (omzetOrders) supaya semantiknya persis sama.
+        db.from('orders').select(ORDER_COLS).gte('order_date', dateFrom).lt('order_date', dateTo),
         db.from('hpp_items').select('sku,cost_per_unit,total_cost,created_at').order('created_at', { ascending: false }),
         db.from('ads').select('cost,ad_date,sumber_bayar,sudah_potong_income,cc_dibayar'),
         db.from('operational').select('cost,op_date'),
         db.from('scan_logs').select('id,expedition,is_cancelled,scan_date').eq('scan_date', App.todayISO()),
-        db.from('income_releases').select('order_no,gross_amount,discount,voucher_seller,net_amount,release_date,created_at'),
         db.from('ads_expenses').select('biaya,month,year,sumber_bayar,sudah_potong_income,cc_dibayar'),
         db.from('kas_pribadi').select('tipe,jumlah'),
         db.from('hutang_pembayaran').select('sumber_kas_bisnis'),
@@ -67,7 +88,28 @@ const Dashboard = {
         db.from('uang_muka_pembelian').select('jumlah,terpakai'),
         db.from('penyesuaian_shopee').select('jenis,jumlah'),
       ]);
-      if (e1 || e2 || e3 || e4 || e5 || e6 || e7 || e8 || e9 || e10 || e11 || e12) throw new Error((e1||e2||e3||e4||e5||e6||e7||e8||e9||e10||e11||e12).message);
+      if (e1a || e1b || e2 || e3 || e4 || e5 || e7 || e8 || e9 || e10 || e11 || e12) throw new Error((e1a||e1b||e2||e3||e4||e5||e7||e8||e9||e10||e11||e12).message);
+      App.warnIfRowCap(hppData, 'dashboard: hpp_items');
+
+      // Saldo Shopee/BCA butuh akumulasi SEMUA WAKTU (all-time, tidak ikut filter bulan —
+      // lihat catatan di bawah), tapi HANYA baris source='offline' (Manual/Offline) yang
+      // relevan di sini — dipersempit server-side dulu supaya volumenya jauh lebih kecil
+      // dari total orders, lalu App.fetchAllRows() sbg pengaman kalau suatu saat tetap
+      // melebihi row cap (mis. penjualan offline berkembang jadi sangat besar).
+      const ordersManualAllTime = await App.fetchAllRows(
+        (from, to) => db.from('orders').select('order_no,status,qty,sku,selling_price,metode_bayar,source,created_at')
+          .eq('source', 'offline').range(from, to)
+      );
+
+      // income_releases: dipakai utk Saldo Shopee (SUM net_amount SEMUA WAKTU) & pencocokan
+      // order_no pesanan bulan ini — release_date suatu rilis bisa beda bulan dari order_date
+      // pesanannya (baru cair belakangan), jadi TIDAK bisa difilter per-bulan di server;
+      // genuinely butuh SELURUH histori → App.fetchAllRows().
+      const allReleases = await App.fetchAllRows(
+        (from, to) => db.from('income_releases')
+          .select('order_no,gross_amount,discount,voucher_seller,net_amount,release_date,created_at')
+          .range(from, to)
+      );
 
       // order_import_log (MIGRASI v21) — query terpisah dari Promise.all di atas dan TIDAK
       // ikut throw kalau error, supaya Dashboard tetap jalan kalau migrasinya belum dijalankan
@@ -96,14 +138,10 @@ const Dashboard = {
       const modalAwalBca    = parseFloat(settings.modal_awal_bca || 0);
       const modalAwalShopee = parseFloat(settings.modal_awal_shopee || 0);
 
-      // Rentang tanggal bulan yang dipilih (sama seperti Laba Rugi)
-      const dateFrom  = `${tahun}-${String(bulan).padStart(2, '0')}-01`;
-      const nextMonth = new Date(tahun, bulan, 1); // bulan 1-based → index ini = bulan berikutnya
-      const dateTo    = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
-      const inRange   = (d) => !!d && d >= dateFrom && d < dateTo;
-
       const today     = App.todayISO();
-      const all       = orders || [];
+      // order_date bulan ini sudah difilter server-side (lihat query ordersByOrderDate di
+      // atas); exclude Batal tetap di client (lihat alasannya di query-nya di atas).
+      const omzetOrders = (ordersByOrderDate || []).filter(o => o.status !== 'Batal');
       const sum       = (arr, key) => arr.reduce((s, r) => s + (+r[key] || 0), 0);
       // KPI status pesanan (Dikirim Hari Ini, Total Diproses, Berhasil, dst.) satuannya
       // pesanan, bukan baris — satu order_no bisa punya beberapa baris SKU (mis. bundling
@@ -127,18 +165,18 @@ const Dashboard = {
       // Total Pengeluaran & Laba Bersih di kedua halaman selalu sinkron.
       const hppFromReleases = (relSubset) => {
         const nos = new Set(relSubset.map(r => r.order_no).filter(Boolean));
-        return all
+        // Order_no di matchedReleases selalu berasal dari omzetOrders (lihat shopeeOrderNos
+        // di bawah), jadi cukup cari di situ — tidak perlu order all-time.
+        return omzetOrders
           .filter(o => nos.has(o.order_no) && (o.status === 'Selesai' || o.status === 'Diproses'))
           .reduce((s, o) => s + hppFor(o), 0);
       };
-
-      const allReleases = releases || [];
 
       // Pesanan Manual/Offline (source = 'offline') tidak pernah muncul di income_releases
       // karena bukan transaksi Shopee — tidak ada potongan platform, jadi Net Diterima-nya
       // = Harga Jual penuh (selling_price × qty). Ditambahkan terpisah ke Omzet & Net Diterima.
       const isManualLunas = (o) => o.source === 'offline' && (o.status === 'Selesai' || o.status === 'Diproses');
-      const manualAll       = all.filter(isManualLunas);
+      const manualAll       = ordersManualAllTime.filter(isManualLunas);
       const manualAmount    = (o) => (+o.selling_price || 0) * (+o.qty || 1);
       // Pesanan offline "Tunai" (default, termasuk baris lama tanpa metode_bayar) tetap
       // dikecualikan total dari Saldo BCA/Shopee — uangnya tidak pernah lewat rekening/Shopee.
@@ -243,7 +281,9 @@ const Dashboard = {
 
       // ── Sisanya: mengikuti filter bulan yang dipilih ──
       // "Berhasil" = Selesai ATAU Dibayar (Dibayar diset oleh Import Income untuk pesanan Selesai yang dananya sudah dirilis)
-      const monthOrders = all.filter(o => inRange((o.created_at || '').slice(0, 10)));
+      // monthOrders sudah difilter server-side (created_at bulan ini) — lihat query
+      // ordersByCreated di atas.
+      const monthOrders = ordersByCreated || [];
       const selesai   = monthOrders.filter(o => o.status === 'Selesai' || o.status === 'Dibayar');
       const batal     = monthOrders.filter(o => o.status === 'Batal');
       const gagal     = monthOrders.filter(o => o.status === 'Gagal Kirim');
@@ -265,8 +305,8 @@ const Dashboard = {
       // beda bulan dari order_date, sehingga pesanan bulan lalu yang baru cair bulan ini
       // dulu ikut kehitung sebagai omzet bulan ini. Semua status KECUALI 'Batal' dihitung
       // (Diproses/Gagal Kirim/Dikembalikan/Selesai/Dibayar tetap masuk — cuma Batal yang
-      // dibuang, sesuai definisi "omzet kotor").
-      const omzetOrders = all.filter(o => inRange((o.order_date || '').slice(0, 10)) && o.status !== 'Batal');
+      // dibuang, sesuai definisi "omzet kotor"). omzetOrders sudah dideklarasikan di atas
+      // (order_date server-filtered, status !== 'Batal' di client — lihat query di atas).
       const omzetLineAmount = (o) => (+o.selling_price || 0) * (+o.qty || 1);
       const omzet = omzetOrders.reduce((s, o) => s + omzetLineAmount(o), 0);
 

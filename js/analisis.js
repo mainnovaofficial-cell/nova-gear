@@ -57,12 +57,19 @@ const Analisis = {
 
   async _load() {
     const db = App.db();
-    const [{ data: orders }, { data: releases }, { data: hpp }, settings] = await Promise.all([
-      db.from('orders').select('order_no,sku,product_name,qty,gross_revenue,net_revenue,status'),
-      db.from('income_releases').select('order_no,gross_amount,discount,voucher_seller,net_amount'),
+    // Analisis Produk = margin aktual SEMUA WAKTU (tidak ada filter periode di halaman ini),
+    // jadi orders & income_releases genuinely butuh SELURUH baris — pakai App.fetchAllRows()
+    // supaya tidak diam-diam kepotong row cap default PostgREST/Supabase (biasanya 1000
+    // baris) begitu tabelnya tumbuh besar.
+    const [orders, releases, { data: hpp }, settings] = await Promise.all([
+      App.fetchAllRows((from, to) => db.from('orders')
+        .select('order_no,sku,product_name,qty,gross_revenue,net_revenue,status').range(from, to)),
+      App.fetchAllRows((from, to) => db.from('income_releases')
+        .select('order_no,gross_amount,discount,voucher_seller,net_amount').range(from, to)),
       db.from('hpp_items').select('sku,cost_per_unit,created_at').order('created_at', { ascending: false }),
       App.getSettings(),
     ]);
+    App.warnIfRowCap(hpp, 'analisis: hpp_items');
     const freebieDefault = App.getFreebieDefaultPrice(settings);
 
     // Pesanan berhasil (Selesai/Dibayar) saja

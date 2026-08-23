@@ -438,6 +438,9 @@ const App = {
     return AppState.supabase;
   },
 
+  // Row cap default PostgREST/Supabase kalau tidak dikonfigurasi khusus di project settings.
+  _ROW_CAP_HINT: 1000,
+
   // Ambil SEMUA baris lewat pagination .range(), supaya query tidak diam-diam kepotong
   // row cap default PostgREST/Supabase (biasanya 1000) di tabel besar/terus-tumbuh
   // (mis. order_import_log, orders). Pakai ini kalau perhitungan butuh SELURUH baris,
@@ -456,6 +459,19 @@ const App = {
       from += pageSize;
     }
     return all;
+  },
+
+  // Early-warning utk query SATU KALI TEMBAK (tanpa App.fetchAllRows) di tabel yang
+  // berpotensi tumbuh besar: kalau hasilnya PERSIS _ROW_CAP_HINT baris, itu indikasi kuat
+  // hasilnya kepotong row cap default PostgREST diam-diam (tanpa error) — sama seperti bug
+  // panel Status Import & Riwayat Stok yang sudah diperbaiki. Bukan pengganti fix (pindah ke
+  // fetchAllRows / filter server-side tetap yang benar), cuma jaring pengaman supaya masalah
+  // serupa di tempat lain ketahuan dari console, bukan dari angka yang diam-diam salah.
+  warnIfRowCap(data, label) {
+    if (Array.isArray(data) && data.length === this._ROW_CAP_HINT) {
+      console.warn(`[RowCap] Query "${label}" mengembalikan tepat ${this._ROW_CAP_HINT} baris — kemungkinan kepotong row cap default PostgREST/Supabase. Pertimbangkan App.fetchAllRows() atau filter server-side (.gte/.lte/.eq) di query ini.`);
+    }
+    return data;
   },
 
   async _fetchSettings() {

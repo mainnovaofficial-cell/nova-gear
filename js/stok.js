@@ -77,15 +77,21 @@ const Stok = {
       const db = App.db();
       const [
         { data: hppData  },
-        { data: orders   },
+        orders,
         { data: adjusts  },
         { data: stokAwal },
       ] = await Promise.all([
         db.from('hpp_items').select('sku,product_name,qty'),
-        db.from('orders').select('sku,product_name,qty,stok_action,status'),
+        // Posisi stok = akumulasi SEMUA WAKTU (awal + masuk - keluar + adjust), jadi butuh
+        // SELURUH baris orders, bukan sebagian — App.fetchAllRows() supaya tidak diam-diam
+        // kepotong row cap default PostgREST/Supabase (biasanya 1000 baris) begitu tabelnya
+        // tumbuh besar (lihat catatan yang sama di js/dashboard.js & js/analisis.js).
+        App.fetchAllRows((from, to) => db.from('orders')
+          .select('sku,product_name,qty,stok_action,status').range(from, to)),
         db.from('stok_adjust').select('sku,qty').then(r => r, () => ({ data: [] })),
         db.from('stok_awal').select('sku,product_name,qty,parent_sku,hidden').then(r => r, () => ({ data: [] })),
       ]);
+      App.warnIfRowCap(hppData, 'stok (Rekap Stok): hpp_items');
 
       // Normalisasi SKU (trim + uppercase) supaya SKU yang sama dari sumber berbeda
       // (stok_awal, hpp_items, orders, stok_adjust) selalu cocok satu sama lain —
