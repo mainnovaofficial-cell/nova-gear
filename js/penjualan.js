@@ -776,6 +776,17 @@ const Penjualan = {
     for (const k of keys) {
       if (row[k] !== undefined && row[k] !== '') return row[k];
     }
+    // Fallback: cocokkan nama kolom secara toleran (trim + rapikan spasi + case-insensitive).
+    // Header Excel dari Shopee kadang beda spasi/kapitalisasi antar file meski secara makna
+    // sama (mis. "Status Pembatalan/ Pengembalian" vs "Status Pembatalan/Pengembalian") —
+    // exact match di atas akan gagal diam-diam dan kolom itu terbaca kosong.
+    const normKey = s => String(s).trim().toLowerCase().replace(/\s+/g, ' ').replace(/\s*\/\s*/g, '/');
+    const rowKeys = Object.keys(row);
+    for (const k of keys) {
+      const target = normKey(k);
+      const found = rowKeys.find(rk => normKey(rk) === target);
+      if (found !== undefined && row[found] !== '') return row[found];
+    }
     return '';
   },
 
@@ -905,8 +916,15 @@ const Penjualan = {
           let status = mapped.status;
           if (!status) return null; // Menunggu Pembayaran, dll → dikenali, memang sengaja dilewati
 
-          // Pesanan "Selesai" yang punya retur aktif → override ke Retur, masuk Perlu Direview
-          const isRetur = status === 'Selesai' && cancelReturnStatus && returnedQty > 0;
+          // Pesanan "Selesai" yang punya retur aktif → override ke Retur, masuk Perlu Direview.
+          // Shopee menulis "Status Pesanan" = Selesai begitu transaksi mereka tuntas, meski
+          // barangnya sudah/sedang dikembalikan — jangan percaya kolom itu sendirian, cek juga
+          // Returned quantity & Status Pembatalan/Pengembalian (kasus nyata: 260807Q07WVEU1,
+          // file bilang Selesai tapi Returned quantity=1 & status "Permintaan Disetujui").
+          // OR (bukan AND): salah satu sinyal cukup — returnedQty>0 kadang tidak dibarengi teks
+          // status yang jelas, dan sebaliknya status "disetujui" kadang qty-nya belum terisi.
+          const returApproved = /disetujui|approved/i.test(cancelReturnStatus) && !/dibatalkan|cancel/i.test(cancelReturnStatus);
+          const isRetur = status === 'Selesai' && (returnedQty > 0 || returApproved);
           if (isRetur) status = 'Retur';
 
           return {
@@ -952,14 +970,14 @@ const Penjualan = {
         prog.textContent = `Mengecek database... (${Math.min(i + BATCH, orderNos.length)}/${orderNos.length})`;
         const { data: existing, error: fetchErr } = await App.db()
           .from('orders')
-          .select('id, order_no, sku, status')
+          .select('id, order_no, sku, status, stok_action')
           .in('order_no', chunk);
         if (fetchErr) throw new Error(`Gagal cek database: ${fetchErr.message}${fetchErr.details ? ' — ' + fetchErr.details : ''}`);
         (existing || []).forEach(o => {
           const ordKey = norm(o.order_no);
-          existingByKey.set(`${ordKey}||${norm(o.sku)}`, { id: o.id, status: o.status });
+          existingByKey.set(`${ordKey}||${norm(o.sku)}`, { id: o.id, status: o.status, stok_action: o.stok_action });
           if (!existingByOrder.has(ordKey)) existingByOrder.set(ordKey, []);
-          existingByOrder.get(ordKey).push({ id: o.id, sku: o.sku, status: o.status });
+          existingByOrder.get(ordKey).push({ id: o.id, sku: o.sku, status: o.status, stok_action: o.stok_action });
         });
       }
 
@@ -971,6 +989,14 @@ const Penjualan = {
       const orderNosUpdated  = new Set();
       const orderNosSame     = new Set();
       const orderNosNotFound = new Set();
+      // Mingguan only — pesanan yang stok_action-nya di database SUDAH bernilai final terkait
+      // retur/pengembalian (dikonfirmasi lewat Import Retur atau tombol manual Owner di tab
+      // Perlu Direview) tidak boleh ditimpa balik oleh Import Mingguan, apapun status barunya
+      // di file — kondisi fisik barang yang sudah dikonfirmasi ini lebih dipercaya daripada
+      // kolom "Status Pesanan" Shopee (yang bisa bilang "Selesai" padahal barangnya retur —
+      // kasus nyata: 260807Q07WVEU1).
+      const PROTECTED_STOK_ACTIONS = ['barang_kembali', 'menunggu_barang_kembali', 'sudah_keluar_tidak_balik', 'kompensasi_selesai'];
+      const orderNosSkippedRetur = new Set();
       // Harian only — pesanan yang SUDAH ADA di database tapi berstatus final (Batal/Gagal
       // Kirim/Retur) dan MUNCUL LAGI di file Perlu Dikirim: kemungkinan status di database
       // salah (pesanan hidup lagi / sempat salah dicatat). Harian tidak boleh diam-diam skip
@@ -1027,6 +1053,14 @@ const Penjualan = {
             const entry = statusConflictMap.get(r.order_no);
             conflictRows.forEach(m => entry.ids.add(m.id));
           }
+          continue;
+        }
+
+        // Pengaman berlapis (mingguan only): kalau salah satu baris DB yang cocok sudah
+        // ditandai final terkait retur/pengembalian, jangan timpa — lewati pesanan ini
+        // sepenuhnya (status & stok_action tetap seperti di database).
+        if (matches.some(m => PROTECTED_STOK_ACTIONS.includes(m.stok_action))) {
+          orderNosSkippedRetur.add(r.order_no);
           continue;
         }
 
@@ -1211,7 +1245,14 @@ const Penjualan = {
           updatesByStatus[s] = (updatesByStatus[s] || 0) + g.orderNos.size;
         }
         const uRows = Object.entries(updatesByStatus);
-        const badgeMap = { Selesai:'text-green-700', Diproses:'text-blue-700', 'Gagal Kirim':'text-red-600', Batal:'text-gray-500' };
+        const badgeMap = { Selesai:'text-green-700', Diproses:'text-blue-700', 'Gagal Kirim':'text-red-600', Batal:'text-gray-500', Retur:'text-orange-600' };
+        const skippedReturList = [...orderNosSkippedRetur];
+        const skippedReturHtml = skippedReturList.length ? `
+          <div class="mt-2 p-2 bg-orange-50 border border-orange-100 rounded text-xs text-orange-700">
+            <p class="font-semibold">${skippedReturList.length} pesanan dilewati karena terdeteksi retur/pengembalian:</p>
+            <p class="mt-1 font-mono break-all">${skippedReturList.slice(0, 20).join(', ')}</p>
+            ${skippedReturList.length > 20 ? `<p class="mt-1">+${skippedReturList.length - 20} pesanan lain</p>` : ''}
+          </div>` : '';
         res.innerHTML = `
           <div class="space-y-1">
             <p class="font-semibold text-green-700">Import Mingguan selesai!</p>
@@ -1223,6 +1264,7 @@ const Penjualan = {
               <p>Dilewati (status di file sama dengan di database): <strong>${orderNosSame.size}</strong> pesanan</p>
               <p>Tidak ditemukan di database (pesanan baru — Import Mingguan tidak menambahkannya, lihat catatan fitur): <strong>${orderNosNotFound.size}</strong> pesanan</p>
             </div>
+            ${skippedReturHtml}
             ${importLogWarning ? `
             <div class="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
               <strong>Migrasi v21 belum dijalankan</strong> — panel Status Import di Dashboard belum bisa mencatat Import Mingguan (tabel <code>order_import_log</code> belum ada).
