@@ -822,6 +822,35 @@ where order_no is not null and order_no <> '' and created_at is not null
 on conflict (order_no, tanggal_import, jenis_import) do nothing;
 
 -- ═══════════════════════════════════════════════════════
+--  MIGRASI v22 — Abaikan Review (tab Perlu Direview)
+--  Jalankan di Supabase SQL Editor setelah update ini
+-- ═══════════════════════════════════════════════════════
+
+-- Kasus nyata: pesanan 2608101JKEUM9Y (CN-SL263-WHITE) — pembeli pesan
+-- varian putih, yang dikirim varian abu-abu. Owner sudah menyelesaikannya
+-- lewat penyesuaian stok manual (WHITE +1, GREY -1), status pesanan
+-- 'Selesai' dengan stok_action 'keluar'. Tapi di file Order_all Shopee,
+-- pesanan ini punya Returned quantity = 1 selamanya (Shopee tidak pernah
+-- mengubah kolom itu) — deteksi retur di Import Mingguan menyalakannya
+-- lagi tiap kali file diimport, memaksa pesanan balik ke status Retur dan
+-- muncul lagi di "Perlu Direview". Dua tombol yang ada ("Barang Kembali"
+-- / "Tidak Kembali") sama-sama mengubah stok_action ke nilai yang TIDAK
+-- mengurangi stok, sehingga keduanya bikin stok kelebihan 1 pcs untuk
+-- kasus yang sebenarnya sudah beres ini.
+--
+-- Kolom ini memberi Owner opsi ketiga: "Abaikan — sudah ditangani".
+-- Menandai pesanan sebagai sudah direview TANPA mengubah status atau
+-- stok_action sama sekali. Import Mingguan & Import Retur Lengkap
+-- memperlakukan review_diabaikan_at seperti stok_action final lainnya —
+-- pesanan yang sudah ditandai tidak akan pernah ditimpa balik, apapun isi
+-- file Shopee berikutnya.
+alter table orders add column if not exists review_diabaikan_at       timestamptz;
+alter table orders add column if not exists review_diabaikan_catatan  text;
+alter table orders add column if not exists review_diabaikan_oleh     text;  -- 'Owner' | 'Admin'
+
+create index if not exists orders_review_diabaikan_at_idx on orders(review_diabaikan_at);
+
+-- ═══════════════════════════════════════════════════════
 --  Row Level Security (RLS) — aktifkan setelah setup
 --  Untuk production, gunakan Supabase Auth + RLS policies.
 --  Untuk sementara (anon key): disable RLS di table settings.
