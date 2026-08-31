@@ -163,7 +163,7 @@ const Penjualan = {
     const badge = document.getElementById('pj-review-badge');
     if (badge) {
       const count = this._orders.filter(o =>
-        ['menunggu_barang_kembali', 'perlu_review', 'sudah_keluar_tidak_balik'].includes(o.stok_action)
+        ['menunggu_barang_kembali', 'perlu_review', 'sudah_keluar_tidak_balik'].includes(o.stok_action) && !o.review_diabaikan_at
       ).length;
       badge.textContent = count;
       badge.classList.toggle('hidden', count === 0);
@@ -510,7 +510,7 @@ const Penjualan = {
   /* ── TAB: PERLU DIREVIEW ── */
   _tableReview() {
     const REVIEW_ACTIONS = ['menunggu_barang_kembali', 'perlu_review', 'sudah_keluar_tidak_balik'];
-    const items = this._orders.filter(o => REVIEW_ACTIONS.includes(o.stok_action));
+    const items = this._orders.filter(o => REVIEW_ACTIONS.includes(o.stok_action) && !o.review_diabaikan_at);
 
     if (!items.length) return `
       <div class="empty-state card py-16">
@@ -660,6 +660,12 @@ const Penjualan = {
   },
 
   _reviewActions(o) {
+    const abaikanBtn = `
+          <button onclick="Penjualan.openAbaikanReview('${o.id}')"
+                  class="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors font-medium whitespace-nowrap">
+            Abaikan — sudah ditangani
+          </button>`;
+
     if (o.stok_action === 'menunggu_barang_kembali') {
       return `
         <div class="flex gap-1">
@@ -671,6 +677,7 @@ const Penjualan = {
                   class="text-xs px-2 py-1 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors font-medium whitespace-nowrap">
             Tidak Kembali
           </button>
+          ${abaikanBtn}
         </div>`;
     }
     if (o.stok_action === 'perlu_review') {
@@ -684,16 +691,69 @@ const Penjualan = {
                   class="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium whitespace-nowrap">
             Stok Tetap
           </button>
+          ${abaikanBtn}
         </div>`;
     }
     if (o.stok_action === 'sudah_keluar_tidak_balik') {
       return `
-        <button onclick="Penjualan.confirmReview('${o.id}','kompensasi_selesai')"
-                class="text-xs px-2 py-1 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors font-medium whitespace-nowrap">
-          Catat Kompensasi
-        </button>`;
+        <div class="flex gap-1">
+          <button onclick="Penjualan.confirmReview('${o.id}','kompensasi_selesai')"
+                  class="text-xs px-2 py-1 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors font-medium whitespace-nowrap">
+            Catat Kompensasi
+          </button>
+          ${abaikanBtn}
+        </div>`;
     }
     return '';
+  },
+
+  /* ── ABAIKAN REVIEW (tandai sudah direview manual, tanpa ubah status/stok_action) ── */
+  openAbaikanReview(id) {
+    if (!App.isOwner() && !App.isAdmin()) { App.toast('Hanya Owner/Admin yang dapat konfirmasi.', 'warning'); return; }
+    const order = this._orders.find(o => o.id === id);
+    if (!order) return;
+
+    App.openModal({
+      title: 'Abaikan — Sudah Ditangani',
+      body: `
+      <div class="space-y-3">
+        <p class="text-sm text-gray-600">
+          Pesanan <strong>${order.order_no || 'manual'}</strong> (SKU: ${order.sku||'-'}) akan ditandai
+          sudah direview tanpa mengubah status atau stok. Pesanan ini tidak akan muncul lagi di
+          "Perlu Direview" pada import berikutnya.
+        </p>
+        <div>
+          <label class="label">Catatan (opsional)</label>
+          <textarea id="pj-abaikan-catatan" class="input" rows="3"
+            placeholder="mis. Dipesan putih, dikirim abu-abu, sudah ditangani lewat penyesuaian stok 10 Agu"></textarea>
+        </div>
+      </div>`,
+      footer: `<button onclick="App.closeModal()" class="btn-secondary">Batal</button>
+               <button onclick="Penjualan.saveAbaikanReview('${id}')" class="btn-primary">Simpan</button>`,
+    });
+  },
+
+  async saveAbaikanReview(id) {
+    const order = this._orders.find(o => o.id === id);
+    if (!order) return;
+    const catatan = document.getElementById('pj-abaikan-catatan')?.value.trim() || null;
+
+    const { error } = await App.db().from('orders').update({
+      review_diabaikan_at:       new Date().toISOString(),
+      review_diabaikan_catatan:  catatan,
+      review_diabaikan_oleh:     App.isOwner() ? 'Owner' : 'Admin',
+    }).eq('id', id);
+    if (error) { App.toast('Gagal menyimpan: ' + error.message, 'error'); return; }
+
+    App.closeModal();
+    App.toast('Pesanan ditandai sudah direview. Tidak akan muncul lagi di Perlu Direview.', 'success');
+
+    order.review_diabaikan_at      = new Date().toISOString();
+    order.review_diabaikan_catatan = catatan;
+    order.review_diabaikan_oleh    = App.isOwner() ? 'Owner' : 'Admin';
+
+    this._updateReviewBadge();
+    this._renderTab();
   },
 
   async confirmReview(id, action) {
@@ -970,14 +1030,14 @@ const Penjualan = {
         prog.textContent = `Mengecek database... (${Math.min(i + BATCH, orderNos.length)}/${orderNos.length})`;
         const { data: existing, error: fetchErr } = await App.db()
           .from('orders')
-          .select('id, order_no, sku, status, stok_action')
+          .select('id, order_no, sku, status, stok_action, review_diabaikan_at')
           .in('order_no', chunk);
         if (fetchErr) throw new Error(`Gagal cek database: ${fetchErr.message}${fetchErr.details ? ' — ' + fetchErr.details : ''}`);
         (existing || []).forEach(o => {
           const ordKey = norm(o.order_no);
-          existingByKey.set(`${ordKey}||${norm(o.sku)}`, { id: o.id, status: o.status, stok_action: o.stok_action });
+          existingByKey.set(`${ordKey}||${norm(o.sku)}`, { id: o.id, status: o.status, stok_action: o.stok_action, review_diabaikan_at: o.review_diabaikan_at });
           if (!existingByOrder.has(ordKey)) existingByOrder.set(ordKey, []);
-          existingByOrder.get(ordKey).push({ id: o.id, sku: o.sku, status: o.status, stok_action: o.stok_action });
+          existingByOrder.get(ordKey).push({ id: o.id, sku: o.sku, status: o.status, stok_action: o.stok_action, review_diabaikan_at: o.review_diabaikan_at });
         });
       }
 
@@ -1058,8 +1118,13 @@ const Penjualan = {
 
         // Pengaman berlapis (mingguan only): kalau salah satu baris DB yang cocok sudah
         // ditandai final terkait retur/pengembalian, jangan timpa — lewati pesanan ini
-        // sepenuhnya (status & stok_action tetap seperti di database).
-        if (matches.some(m => PROTECTED_STOK_ACTIONS.includes(m.stok_action))) {
+        // sepenuhnya (status & stok_action tetap seperti di database). Sama halnya kalau
+        // Owner sudah menandai "Abaikan — sudah ditangani" di tab Perlu Direview
+        // (review_diabaikan_at terisi) — meski stok_action-nya bukan salah satu nilai
+        // "final" di atas (mis. sudah diubah manual jadi 'keluar'), keputusan Owner tetap
+        // harus dihormati dan tidak boleh ditimpa balik oleh deteksi retur file berikutnya
+        // (kasus nyata: 2608101JKEUM9Y — Returned quantity tetap 1 di file Shopee selamanya).
+        if (matches.some(m => PROTECTED_STOK_ACTIONS.includes(m.stok_action) || m.review_diabaikan_at)) {
           orderNosSkippedRetur.add(r.order_no);
           continue;
         }
@@ -1487,19 +1552,21 @@ const Penjualan = {
       const existingMap     = new Map(); // "order_no||sku" → id (exact match)
       const currentActionMap = new Map(); // "order_no||sku" → stok_action saat ini di DB
       const currentStatusMap = new Map(); // "order_no||sku" → status saat ini di DB
-      const byOrderNo        = new Map(); // order_no → [{ id, sku, stok_action, status }]
+      const currentDiabaikanMap = new Map(); // "order_no||sku" → review_diabaikan_at saat ini di DB
+      const byOrderNo        = new Map(); // order_no → [{ id, sku, stok_action, status, review_diabaikan_at }]
       const BATCH = 100;
       for (let i = 0; i < allNos.length; i += BATCH) {
         const chunk = allNos.slice(i, i + BATCH);
-        const { data, error } = await App.db().from('orders').select('id, order_no, sku, stok_action, status').in('order_no', chunk);
+        const { data, error } = await App.db().from('orders').select('id, order_no, sku, stok_action, status, review_diabaikan_at').in('order_no', chunk);
         if (error) throw error;
         (data || []).forEach(o => {
           const key = `${o.order_no}||${o.sku || ''}`;
           existingMap.set(key, o.id);
           currentActionMap.set(key, o.stok_action);
           currentStatusMap.set(key, o.status);
+          currentDiabaikanMap.set(key, o.review_diabaikan_at);
           if (!byOrderNo.has(o.order_no)) byOrderNo.set(o.order_no, []);
-          byOrderNo.get(o.order_no).push({ id: o.id, sku: o.sku, stok_action: o.stok_action, status: o.status });
+          byOrderNo.get(o.order_no).push({ id: o.id, sku: o.sku, stok_action: o.stok_action, status: o.status, review_diabaikan_at: o.review_diabaikan_at });
         });
       }
 
@@ -1519,7 +1586,9 @@ const Penjualan = {
       // Ini tidak menghalangi retur yang benar-benar baru: retur baru selalu datang untuk
       // pesanan yang statusnya belum 'Selesai' (mis. masih 'Diproses'/'Retur'), jadi tidak kena
       // proteksi ini.
-      const isProtectedFinal = m => FINAL_STOK_ACTIONS.includes(m.stok_action) || m.status === 'Selesai';
+      // review_diabaikan_at: Owner sudah menandai "Abaikan — sudah ditangani" di tab Perlu
+      // Direview — keputusan itu final juga, terlepas dari stok_action/status saat ini.
+      const isProtectedFinal = m => FINAL_STOK_ACTIONS.includes(m.stok_action) || m.status === 'Selesai' || !!m.review_diabaikan_at;
 
       // ── Update pesanan ada / Insert pesanan baru ──
       let nUpdate = 0, nInsert = 0, nBatal = 0, nGagal = 0, nRetur = 0, nReview = 0, nSkipFinal = 0, nReturBatal = 0;
@@ -1536,7 +1605,7 @@ const Penjualan = {
         // Cocokkan order_no+sku persis dulu; kalau tidak ketemu, fallback ke semua
         // baris yang order_no-nya sama (lihat catatan di atas soal beda istilah SKU).
         const matches = existingMap.has(key)
-          ? [{ id: existingMap.get(key), sku: rec.sku, stok_action: currentActionMap.get(key), status: currentStatusMap.get(key) }]
+          ? [{ id: existingMap.get(key), sku: rec.sku, stok_action: currentActionMap.get(key), status: currentStatusMap.get(key), review_diabaikan_at: currentDiabaikanMap.get(key) }]
           : (byOrderNo.get(rec.order_no) || []);
 
         if (matches.length) {
