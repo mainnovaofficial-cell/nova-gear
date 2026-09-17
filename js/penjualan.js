@@ -74,6 +74,10 @@ const Penjualan = {
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           Tambah Manual
         </button>
+        <button onclick="Penjualan._exportCSV()" class="btn-secondary text-xs">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          Export CSV
+        </button>
         ${App.isOwner() ? `
         <button onclick="Penjualan.openHapusPeriode()" class="btn-danger text-xs">
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
@@ -190,6 +194,56 @@ const Penjualan = {
       if (f.dateTo   && (o.order_date||'') > f.dateTo)   return false;
       return true;
     });
+  },
+
+  // Export CSV mengikuti filter aktif (periode/bulan, tanggal, status, kata kunci) — data
+  // sumbernya this._orders yang sudah dimuat penuh lewat App.fetchAllRows() di _loadOrders(),
+  // jadi tidak kena row cap default PostgREST/Supabase walau periode terpilih besar.
+  // tanggal_import per order_no = MIN tanggal_import dari order_import_log (jenis 'harian'),
+  // fallback ke created_at kalau order_no tidak pernah tercatat di log — konsisten dengan
+  // logika Rekap Harian (lihat belongsTo() di _tableHarian).
+  _exportCSV() {
+    const data = this._filtered();
+    if (!data.length) {
+      App.toast('Tidak ada data untuk diekspor.', 'warning');
+      return;
+    }
+
+    // this._importLog sudah diurutkan ascending by tanggal_import (lihat _loadImportLog),
+    // jadi kemunculan pertama tiap order_no di array = tanggal_import PALING AWAL (min).
+    const importMin = {};
+    for (const l of this._importLog) {
+      if (!(l.order_no in importMin)) importMin[l.order_no] = l.tanggal_import;
+    }
+
+    const rows = data.map(o => {
+      const createdDate = (o.created_at || '').slice(0, 10);
+      return {
+        order_no:       o.order_no || '',
+        order_date:     o.order_date || '',
+        sku:            o.sku || '',
+        product_name:   o.product_name || '',
+        variation:      o.variation || '',
+        qty:            o.qty || 1,
+        selling_price:  +o.selling_price || 0,
+        gross_revenue:  +o.gross_revenue || 0,
+        net_revenue:    +o.net_revenue || 0,
+        status:         o.status || '',
+        stok_action:    o.stok_action || '',
+        expedition:     o.expedition || '',
+        source:         o.source || 'shopee',
+        metode_bayar:   o.metode_bayar || '',
+        created_at:     createdDate,
+        tanggal_import: (o.order_no && importMin[o.order_no]) || createdDate,
+      };
+    });
+
+    // Nama file mengikuti rentang tanggal yang difilter. Kalau filter tanggal kosong (mis.
+    // dropdown Bulan = "Semua"), pakai rentang order_date aktual dari data yang ter-export.
+    const orderDates = data.map(o => o.order_date).filter(Boolean).sort();
+    const from = this._filter.dateFrom || orderDates[0] || App.todayISO();
+    const to   = this._filter.dateTo   || orderDates[orderDates.length - 1] || App.todayISO();
+    App.exportCSV(rows, `penjualan_${from}_sd_${to}.csv`);
   },
 
   _switchTab(tab, btn) {
