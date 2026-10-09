@@ -505,6 +505,14 @@ const App = {
     return +(settings || AppState.settings || {}).freebie_default_price || 7300;
   },
 
+  // SKU stok freebie yang sedang dipakai (mis. "FREE-STANDPHONE") — dipakai di Stok
+  // (Rekap & Riwayat) untuk menghitung Keluar-nya dari pesanan ber-SKU "-F", bukan dari
+  // pesanan ber-SKU freebie itu sendiri (yang memang tidak pernah ada). Kosong = fitur ini
+  // tidak aktif, perilaku Stok tetap seperti sebelumnya.
+  getFreebieActiveSku(settings) {
+    return ((settings || AppState.settings || {}).freebie_active_sku || '').trim().toUpperCase();
+  },
+
   // SKU di orders sering punya suffix varian (mis. "BM-M5-B-F", "BM-M5-B-TF") yang
   // berbagi HPP fisik sama dengan SKU induknya di hpp_items (mis. "BM-M5-B"). Coba
   // exact match dulu, kalau tidak ketemu strip 1 segmen suffix terakhir lalu coba lagi.

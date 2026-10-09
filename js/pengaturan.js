@@ -72,11 +72,16 @@ const Pengaturan = {
       <!-- Harga Freebie Default -->
       <div class="card">
         <h3 class="card-title mb-4">Harga Freebie Default</h3>
-        <div><label class="label">Harga Freebie Default (Rp)</label>
-          <input id="s-freebie-price" type="number" class="input" value="${s.freebie_default_price||7300}" step="100" min="0"/>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div><label class="label">Harga Freebie Default (Rp)</label>
+            <input id="s-freebie-price" type="number" class="input" value="${s.freebie_default_price||7300}" step="100" min="0"/>
+          </div>
+          <div><label class="label">SKU Freebie Aktif</label>
+            <input id="s-freebie-active-sku" class="input font-mono" value="${s.freebie_active_sku||''}" placeholder="mis. FREE-STANDPHONE"/>
+          </div>
         </div>
-        <p class="text-xs text-gray-400 mt-2">Dipakai otomatis untuk SKU yang berakhiran "-F" di form HPP, Laba Rugi, dan Analisis Margin.</p>
-        <button onclick="Pengaturan.saveGroup(['freebie_default_price'])" class="btn-primary text-xs mt-4">Simpan</button>
+        <p class="text-xs text-gray-400 mt-2">Harga dipakai otomatis untuk SKU yang berakhiran "-F" di form HPP, Laba Rugi, dan Analisis Margin. SKU Freebie Aktif dipakai di halaman Stok supaya kolom Keluar stok freebie ikut terhitung dari pesanan ber-SKU "-F" — kosongkan untuk mematikan fitur ini.</p>
+        <button onclick="Pengaturan.saveGroup(['freebie_default_price','freebie_active_sku'])" class="btn-primary text-xs mt-4">Simpan</button>
       </div>
 
       <!-- Password Owner -->
@@ -158,6 +163,7 @@ const Pengaturan = {
       modal_awal_bca:             's-modal-awal-bca',
       modal_awal_shopee:          's-modal-awal-shopee',
       freebie_default_price:      's-freebie-price',
+      freebie_active_sku:         's-freebie-active-sku',
     };
 
     const updates = keys.map(k => ({
