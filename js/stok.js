@@ -80,6 +80,7 @@ const Stok = {
         orders,
         { data: adjusts  },
         { data: stokAwal },
+        settings,
       ] = await Promise.all([
         db.from('hpp_items').select('sku,product_name,qty'),
         // Posisi stok = akumulasi SEMUA WAKTU (awal + masuk - keluar + adjust), jadi butuh
@@ -90,8 +91,14 @@ const Stok = {
           .select('sku,product_name,qty,stok_action,status').range(from, to)),
         db.from('stok_adjust').select('sku,qty').then(r => r, () => ({ data: [] })),
         db.from('stok_awal').select('sku,product_name,qty,parent_sku,hidden').then(r => r, () => ({ data: [] })),
+        App.getSettings(),
       ]);
       App.warnIfRowCap(hppData, 'stok (Rekap Stok): hpp_items');
+      // SKU Freebie Aktif (Pengaturan) — kalau diisi, Keluar SKU ini dihitung dari SEMUA
+      // pesanan ber-SKU "-F" (lihat forEach orders di bawah), bukan dari pesanan ber-SKU
+      // freebie itu sendiri (yang memang tidak pernah ada, karena orders selalu memakai
+      // SKU produknya, mis. "BM-M5-B-F"). Kosong = tidak ada perubahan perilaku.
+      const freebieActiveSku = App.getFreebieActiveSku(settings);
 
       // Normalisasi SKU (trim + uppercase) supaya SKU yang sama dari sumber berbeda
       // (stok_awal, hpp_items, orders, stok_adjust) selalu cocok satu sama lain —
@@ -142,7 +149,14 @@ const Stok = {
         ensure(sku, r.product_name);
         // Backward compat: old Selesai orders without stok_action
         const action = r.stok_action || (r.status === 'Selesai' ? 'keluar' : null);
-        if (DEDUCT.has(action)) map[groupKey(sku)].keluar += +r.qty || 0;
+        if (!DEDUCT.has(action)) return;
+        map[groupKey(sku)].keluar += +r.qty || 0;
+        // Tiap unit SKU "-F" terjual juga memakai 1 unit stok freebie fisik — ikutkan
+        // qty-nya ke Keluar SKU Freebie Aktif (lihat catatan freebieActiveSku di atas).
+        if (freebieActiveSku && App.isFreebieSku(r.sku)) {
+          ensure(freebieActiveSku);
+          map[groupKey(freebieActiveSku)].keluar += +r.qty || 0;
+        }
       });
 
       (adjusts || []).forEach(r => {
@@ -388,6 +402,7 @@ const Stok = {
       { data: orders     },
       { data: adjusts    },
       importLog,
+      settings,
     ] = await Promise.all([
       db.from('stok_awal').select('sku,product_name,qty,parent_sku,hidden').then(r => r, () => ({ data: [] })),
       db.from('hpp_batches').select('purchase_date,hpp_items(sku,product_name,qty)'),
@@ -403,7 +418,12 @@ const Stok = {
         (from, to) => db.from('order_import_log').select('order_no,tanggal_import')
           .order('tanggal_import', { ascending: true }).range(from, to)
       ).catch(() => []),
+      App.getSettings(),
     ]);
+
+    // Lihat catatan freebieActiveSku di _renderRekap — sama persis, supaya Rekap & Riwayat
+    // Stok konsisten.
+    const freebieActiveSku = App.getFreebieActiveSku(settings);
 
     const normSku = raw => (raw || '').toString().trim().toUpperCase() || 'TANPA-SKU';
     const parentMap = {};
@@ -443,7 +463,19 @@ const Stok = {
       const action = r.stok_action || (r.status === 'Selesai' ? 'keluar' : null);
       if (!DEDUCT.has(action)) return;
       const sku = normSku(r.sku);
-      keluarEvents.push({ sku, group: groupKey(sku), name: r.product_name, tanggal: effDate(r), qty: +r.qty || 0, order_no: r.order_no || '(manual)' });
+      const tanggal = effDate(r);
+      const qty = +r.qty || 0;
+      const order_no = r.order_no || '(manual)';
+      keluarEvents.push({ sku, group: groupKey(sku), name: r.product_name, tanggal, qty, order_no });
+      // Tiap unit SKU "-F" terjual juga memakai 1 unit stok freebie fisik — tambahkan
+      // event Keluar terpisah utk SKU Freebie Aktif (lihat catatan freebieActiveSku di atas).
+      if (freebieActiveSku && App.isFreebieSku(r.sku)) {
+        keluarEvents.push({
+          sku: freebieActiveSku, group: groupKey(freebieActiveSku),
+          name: (skuMeta[freebieActiveSku] || {}).name || freebieActiveSku,
+          tanggal, qty, order_no,
+        });
+      }
     });
 
     const adjustEvents = [];
