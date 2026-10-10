@@ -904,34 +904,72 @@ const Penjualan = {
     }
   },
 
-  // SKU lain dengan parent_sku yang sama dengan SKU pesanan (varian stok fisik sama,
-  // mis. beda warna produk yang sama) — fallback ke semua SKU kalau tidak ada grup
-  // parent sama sekali (produk berdiri sendiri / belum ada data parent_sku).
+  // Semua SKU di stok_awal (kecuali hidden & SKU pesanan sendiri) — BUKAN difilter per
+  // parent_sku. Kasus nyata: parent_sku mengelompokkan varian SKU yang BERBAGI stok
+  // fisik sama (mis. "-F"/"-TF" dari warna yang sama), tapi "Ganti Varian Kirim" justru
+  // dipakai saat Owner mengirim WARNA LAIN (parent_sku beda) dari produk yang sama —
+  // kalau difilter per parent, warna pengganti yang justru dibutuhkan malah hilang dari
+  // pilihan. "related" cuma pengelompokan tampilan (2 segmen awal SKU sama), bukan filter.
   async _fetchVarianCandidates(sku) {
-    const { data } = await App.db().from('stok_awal').select('sku,product_name,parent_sku')
-      .then(r => r, () => ({ data: [] }));
+    const db = App.db();
+    const [{ data: stokAwal }, { data: hppData }, { data: adjusts }] = await Promise.all([
+      db.from('stok_awal').select('sku,product_name,parent_sku,qty,hidden').then(r => r, () => ({ data: [] })),
+      db.from('hpp_items').select('sku,qty').then(r => r, () => ({ data: [] })),
+      db.from('stok_adjust').select('sku,qty').then(r => r, () => ({ data: [] })),
+    ]);
+
     const normSku = raw => (raw || '').toString().trim().toUpperCase();
     const skuNorm = normSku(sku);
-    const parentMap = {};
-    (data || []).forEach(r => {
-      if (r.parent_sku) parentMap[normSku(r.sku)] = normSku(r.parent_sku);
-    });
-    const groupKey = s => parentMap[s] || s;
-    const targetGroup = groupKey(skuNorm);
 
-    let candidates = (data || []).filter(r => normSku(r.sku) !== skuNorm && groupKey(normSku(r.sku)) === targetGroup);
-    if (!candidates.length) {
-      candidates = (data || []).filter(r => normSku(r.sku) !== skuNorm);
-    }
-    return candidates.sort((a, b) => (a.sku || '').localeCompare(b.sku || ''));
+    const parentMap = {};
+    (stokAwal || []).forEach(r => { if (r.parent_sku) parentMap[normSku(r.sku)] = normSku(r.parent_sku); });
+    const groupKey = s => parentMap[s] || s;
+
+    // Sisa Stok per grup fisik — sama persis seperti Rekap Stok (js/stok.js): awal +
+    // masuk (HPP) - keluar (pesanan Selesai/Terkirim) + penyesuaian — supaya Owner bisa
+    // langsung lihat SKU mana yang stoknya masih ada sebelum memilih varian pengganti.
+    const sisaMap = {};
+    const add = (s2, field, qty2) => {
+      const g = groupKey(normSku(s2));
+      if (!sisaMap[g]) sisaMap[g] = { awal: 0, masuk: 0, keluar: 0, adjust: 0 };
+      sisaMap[g][field] += qty2;
+    };
+    (stokAwal || []).forEach(r => add(r.sku, 'awal', +r.qty || 0));
+    (hppData  || []).forEach(r => add(r.sku, 'masuk', +r.qty || 0));
+    const DEDUCT = new Set(['keluar', 'sudah_keluar_tidak_balik', 'menunggu_barang_kembali']);
+    (this._orders || []).forEach(r => {
+      const action = r.stok_action || (r.status === 'Selesai' ? 'keluar' : null);
+      if (DEDUCT.has(action)) add(r.sku, 'keluar', +r.qty || 0);
+    });
+    (adjusts || []).forEach(r => add(r.sku, 'adjust', +r.qty || 0));
+    const sisaOf = s2 => {
+      const m = sisaMap[groupKey(normSku(s2))];
+      return m ? (m.awal + m.masuk - m.keluar + m.adjust) : 0;
+    };
+
+    const candidates = (stokAwal || [])
+      .filter(r => r.hidden !== true && normSku(r.sku) !== skuNorm)
+      .map(r => ({ sku: r.sku, product_name: r.product_name, sisa: sisaOf(r.sku) }))
+      .sort((a, b) => (a.sku || '').localeCompare(b.sku || ''));
+
+    // "Varian Terkait" = SKU berawalan sama dengan SKU pesanan sampai segmen ke-2
+    // (mis. "CN-DSF-BLACK-F" → "CN-DSF" → cocok "CN-DSF-WOOD", "CN-DSF-BLACK", dst).
+    const prefixOf = s2 => normSku(s2).split('-').slice(0, 2).join('-');
+    const targetPrefix = prefixOf(sku);
+    const related = candidates.filter(c => prefixOf(c.sku) === targetPrefix);
+    const others  = candidates.filter(c => prefixOf(c.sku) !== targetPrefix);
+
+    return { related, others };
   },
 
   async _openGantiVarianForm(order) {
-    const candidates = await this._fetchVarianCandidates(order.sku);
+    const { related, others } = await this._fetchVarianCandidates(order.sku);
     const esc = s => (s || '').toString().replace(/"/g, '&quot;');
-    const options = candidates.map(c =>
-      `<option value="${esc(c.sku)}">${c.sku}${c.product_name ? ' — ' + c.product_name : ''}</option>`
-    ).join('');
+    const optionHtml = c =>
+      `<option value="${esc(c.sku)}">${esc(c.sku)}${c.product_name ? ' — ' + esc(c.product_name) : ''} (sisa ${App.formatNumber(c.sisa)})</option>`;
+    const relatedHtml = related.length ? `<optgroup label="Varian Terkait">${related.map(optionHtml).join('')}</optgroup>` : '';
+    const othersHtml  = others.length  ? `<optgroup label="Produk Lain">${others.map(optionHtml).join('')}</optgroup>`  : '';
+    const hasAny = related.length + others.length > 0;
 
     App.openModal({
       title: 'Ganti Varian Kirim',
@@ -950,9 +988,10 @@ const Penjualan = {
           <label class="label">SKU yang Benar-benar Dikirim *</label>
           <select id="gv-sku-dikirim" class="input font-mono">
             <option value="">— Pilih SKU —</option>
-            ${options}
+            ${relatedHtml}
+            ${othersHtml}
           </select>
-          ${!candidates.length ? '<p class="text-xs text-amber-600 mt-1">Belum ada data SKU lain di Stok Awal.</p>' : ''}
+          ${!hasAny ? '<p class="text-xs text-amber-600 mt-1">Belum ada data SKU lain di Stok Awal.</p>' : ''}
         </div>
         <div>
           <label class="label">Qty *</label>
