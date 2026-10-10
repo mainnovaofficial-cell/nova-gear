@@ -1346,14 +1346,15 @@ const Penjualan = {
         prog.textContent = `Mengecek database... (${Math.min(i + BATCH, orderNos.length)}/${orderNos.length})`;
         const { data: existing, error: fetchErr } = await App.db()
           .from('orders')
-          .select('id, order_no, sku, status, stok_action, review_diabaikan_at')
+          .select('id, order_no, sku, status, stok_action, review_diabaikan_at, review_diabaikan_catatan')
           .in('order_no', chunk);
         if (fetchErr) throw new Error(`Gagal cek database: ${fetchErr.message}${fetchErr.details ? ' — ' + fetchErr.details : ''}`);
         (existing || []).forEach(o => {
           const ordKey = norm(o.order_no);
-          existingByKey.set(`${ordKey}||${norm(o.sku)}`, { id: o.id, status: o.status, stok_action: o.stok_action, review_diabaikan_at: o.review_diabaikan_at });
+          const row = { id: o.id, status: o.status, stok_action: o.stok_action, review_diabaikan_at: o.review_diabaikan_at, review_diabaikan_catatan: o.review_diabaikan_catatan };
+          existingByKey.set(`${ordKey}||${norm(o.sku)}`, row);
           if (!existingByOrder.has(ordKey)) existingByOrder.set(ordKey, []);
-          existingByOrder.get(ordKey).push({ id: o.id, sku: o.sku, status: o.status, stok_action: o.stok_action, review_diabaikan_at: o.review_diabaikan_at });
+          existingByOrder.get(ordKey).push({ ...row, sku: o.sku });
         });
       }
 
@@ -1435,15 +1436,25 @@ const Penjualan = {
         // Pengaman berlapis (mingguan only): kalau salah satu baris DB yang cocok sudah
         // ditandai final terkait retur/pengembalian, jangan timpa — lewati pesanan ini
         // sepenuhnya (status & stok_action tetap seperti di database). Sama halnya kalau
-        // Owner sudah menandai "Abaikan — sudah ditangani" di tab Perlu Direview
+        // Owner sudah menandai "Abaikan — sudah ditangani" manual di tab Perlu Direview
         // (review_diabaikan_at terisi) — meski stok_action-nya bukan salah satu nilai
         // "final" di atas (mis. sudah diubah manual jadi 'keluar'), keputusan Owner tetap
         // harus dihormati dan tidak boleh ditimpa balik oleh deteksi retur file berikutnya
         // (kasus nyata: 2608101JKEUM9Y — Returned quantity tetap 1 di file Shopee selamanya).
-        if (matches.some(m => PROTECTED_STOK_ACTIONS.includes(m.stok_action) || m.review_diabaikan_at)) {
+        //
+        // KECUALI penandaan dari fitur "Ganti Varian Kirim" (review_diabaikan_catatan
+        // berawalan _GANTI_VARIAN_PREFIX, lihat openGantiVarian() di atas) — di situ yang
+        // perlu dilindungi HANYA stok (penyesuaiannya sudah dibuat manual di stok_adjust),
+        // STATUS pesanan tetap harus mengikuti Shopee seperti biasa. Kalau dilewati total
+        // seperti "Abaikan" manual, status pesanan itu macet selamanya (kasus nyata:
+        // 2610108HX3XBCT tetap "Diproses" walau sudah "Selesai" di Shopee, bikin KPI
+        // "Total Diproses" kelebihan terus).
+        const isReviewProtected = m => m.review_diabaikan_at && !this._isVarianGantiCatatan(m.review_diabaikan_catatan);
+        if (matches.some(m => PROTECTED_STOK_ACTIONS.includes(m.stok_action) || isReviewProtected(m))) {
           orderNosSkippedRetur.add(r.order_no);
           continue;
         }
+        const protectStokAction = matches.some(m => m.review_diabaikan_at && this._isVarianGantiCatatan(m.review_diabaikan_catatan));
 
         const needsUpdate = matches.some(m => m.status !== r.status);
         if (!needsUpdate) {
@@ -1451,10 +1462,15 @@ const Penjualan = {
           continue;
         }
 
-        const groupKey = `${r.status}__${r.stok_action || ''}`;
+        const groupKey = protectStokAction ? `GV__${r.status}__${r.cancel_reason || ''}` : `${r.status}__${r.stok_action || ''}`;
         if (!toUpdateGroups[groupKey]) {
           toUpdateGroups[groupKey] = {
-            fields:   { status: r.status, stok_action: r.stok_action, cancel_reason: r.cancel_reason },
+            // protectStokAction: field stok_action sengaja tidak dimasukkan supaya .update()
+            // tidak menyentuhnya sama sekali — stok sudah disesuaikan manual lewat
+            // "Ganti Varian Kirim", jangan ditimpa balik oleh status baru dari file ini.
+            fields:   protectStokAction
+              ? { status: r.status, cancel_reason: r.cancel_reason }
+              : { status: r.status, stok_action: r.stok_action, cancel_reason: r.cancel_reason },
             orderNos: new Set(),
           };
         }
