@@ -338,6 +338,14 @@ const Penjualan = {
     return `<span class="badge ${cls} text-xs">${lbl}</span>`;
   },
 
+  // Prefix tetap di review_diabaikan_catatan dipakai untuk mengenali pesanan yang sudah
+  // ditandai lewat fitur "Ganti Varian Kirim" (bukan "Abaikan — sudah ditangani" manual biasa),
+  // supaya tombolnya bisa menampilkan info/undo yang tepat. Lihat openGantiVarian().
+  _GANTI_VARIAN_PREFIX: 'Ganti Varian Kirim — ',
+  _isVarianGantiCatatan(catatan) {
+    return !!(catatan && catatan.startsWith(this._GANTI_VARIAN_PREFIX));
+  },
+
   /* ── TAB: SEMUA PESANAN ── */
   _tableSemua(data) {
     if (!data.length) return `<div class="empty-state"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg><p>Tidak ada pesanan</p></div>`;
@@ -363,6 +371,14 @@ const Penjualan = {
               class="text-xs text-red-400 hover:text-red-600 transition-colors font-medium whitespace-nowrap">
         Hapus
       </button>` : '';
+    const gantiVarianBtn = (o) => o.status === 'Batal' ? '' : `
+      <button onclick="Penjualan.openGantiVarian('${o.id}')"
+              class="text-xs text-purple-400 hover:text-purple-600 transition-colors font-medium whitespace-nowrap">
+        Ganti Varian Kirim
+      </button>`;
+    const varianGantiBadge = (o) => this._isVarianGantiCatatan(o.review_diabaikan_catatan)
+      ? ` <span class="badge badge-blue text-[10px]" title="${(o.review_diabaikan_catatan||'').replace(/"/g,'&quot;')}">Varian Diganti</span>`
+      : '';
 
     const groups = [];
     const groupMap = {};
@@ -390,14 +406,14 @@ const Penjualan = {
           </td>
           <td class="whitespace-nowrap">${isFirst ? App.formatDate(o.order_date) : ''}</td>
           <td class="max-w-[180px] truncate" title="${o.product_name||''}">${o.product_name||'-'}</td>
-          <td class="font-mono text-xs">${o.sku||'-'}</td>
+          <td class="font-mono text-xs">${o.sku||'-'}${varianGantiBadge(o)}</td>
           <td class="text-center">${o.qty||1}</td>
           <td class="text-money">${App.formatRupiah(o.selling_price)}</td>
           <td>${isFirst ? (o.expedition||'-') : ''}</td>
           <td>${isFirst ? statusBadge(o.status) : ''}</td>
           <td>${isFirst ? this._stokActionBadge(o.stok_action) : ''}</td>
           <td>${isFirst ? `<span class="badge ${o.source==='offline'?'badge-orange':'badge-blue'}">${o.source||'shopee'}</span>${o.source==='offline' ? ` <span class="badge badge-gray">${o.metode_bayar||'Tunai'}</span>` : ''}` : ''}</td>
-          <td>${isFirst ? batalBtn(o.id, o.status) : ''} ${editBtn(o)} ${hapusBtn(o)}</td>
+          <td>${isFirst ? batalBtn(o.id, o.status) : ''} ${editBtn(o)} ${gantiVarianBtn(o)} ${hapusBtn(o)}</td>
         </tr>`;
       });
     });
@@ -859,6 +875,213 @@ const Penjualan = {
     // Update local state
     const idx = this._orders.findIndex(o => o.id === id);
     if (idx !== -1) this._orders[idx].stok_action = newAction;
+
+    this._updateReviewBadge();
+    this._renderTab();
+  },
+
+  /* ── GANTI VARIAN KIRIM ──
+     Dipesan beda varian dengan yang dikirim (mis. stok warna yang dipesan kosong,
+     Owner kirim warna lain dari produk yang sama). SKU pesanan sendiri TIDAK diubah
+     (harus tetap cocok dengan data Shopee, supaya tidak ditimpa balik oleh Import
+     Mingguan) — cukup catat 2 baris stok_adjust (+qty SKU dipesan, -qty SKU dikirim)
+     dan tandai pesanan via review_diabaikan_at (kolom yang sudah ada, migrasi v22)
+     supaya tidak nongol lagi di "Perlu Direview". Deteksi "sudah pernah diganti"
+     memakai prefix tetap di review_diabaikan_catatan (_isVarianGantiCatatan di atas);
+     baris stok_adjust terkait dicari balik via exact match notes = catatan tsb (lihat
+     _buildGantiVarianCatatan) — tidak ada FK, tapi catatan ini deterministik per
+     pesanan+pasangan SKU jadi cukup unik untuk keperluan tampilkan info & undo. ── */
+
+  async openGantiVarian(id) {
+    if (!App.isOwner() && !App.isAdmin()) { App.toast('Hanya Owner/Admin yang dapat melakukan ini.', 'warning'); return; }
+    const order = this._orders.find(o => o.id === id);
+    if (!order) return;
+
+    if (order.review_diabaikan_at && this._isVarianGantiCatatan(order.review_diabaikan_catatan)) {
+      await this._openGantiVarianInfo(order);
+    } else {
+      await this._openGantiVarianForm(order);
+    }
+  },
+
+  // SKU lain dengan parent_sku yang sama dengan SKU pesanan (varian stok fisik sama,
+  // mis. beda warna produk yang sama) — fallback ke semua SKU kalau tidak ada grup
+  // parent sama sekali (produk berdiri sendiri / belum ada data parent_sku).
+  async _fetchVarianCandidates(sku) {
+    const { data } = await App.db().from('stok_awal').select('sku,product_name,parent_sku')
+      .then(r => r, () => ({ data: [] }));
+    const normSku = raw => (raw || '').toString().trim().toUpperCase();
+    const skuNorm = normSku(sku);
+    const parentMap = {};
+    (data || []).forEach(r => {
+      if (r.parent_sku) parentMap[normSku(r.sku)] = normSku(r.parent_sku);
+    });
+    const groupKey = s => parentMap[s] || s;
+    const targetGroup = groupKey(skuNorm);
+
+    let candidates = (data || []).filter(r => normSku(r.sku) !== skuNorm && groupKey(normSku(r.sku)) === targetGroup);
+    if (!candidates.length) {
+      candidates = (data || []).filter(r => normSku(r.sku) !== skuNorm);
+    }
+    return candidates.sort((a, b) => (a.sku || '').localeCompare(b.sku || ''));
+  },
+
+  async _openGantiVarianForm(order) {
+    const candidates = await this._fetchVarianCandidates(order.sku);
+    const esc = s => (s || '').toString().replace(/"/g, '&quot;');
+    const options = candidates.map(c =>
+      `<option value="${esc(c.sku)}">${c.sku}${c.product_name ? ' — ' + c.product_name : ''}</option>`
+    ).join('');
+
+    App.openModal({
+      title: 'Ganti Varian Kirim',
+      body: `
+      <div class="space-y-3">
+        <p class="text-sm text-gray-600">
+          Dipesan beda varian dengan yang benar-benar dikirim? Sistem otomatis membuat penyesuaian
+          stok (+qty untuk SKU dipesan, −qty untuk SKU dikirim) dan menandai pesanan ini sudah
+          direview. SKU pesanan sendiri tidak akan diubah.
+        </p>
+        <div>
+          <label class="label">SKU yang Dipesan</label>
+          <input class="input bg-gray-50 font-mono" value="${order.sku || '-'}" disabled/>
+        </div>
+        <div>
+          <label class="label">SKU yang Benar-benar Dikirim *</label>
+          <select id="gv-sku-dikirim" class="input font-mono">
+            <option value="">— Pilih SKU —</option>
+            ${options}
+          </select>
+          ${!candidates.length ? '<p class="text-xs text-amber-600 mt-1">Belum ada data SKU lain di Stok Awal.</p>' : ''}
+        </div>
+        <div>
+          <label class="label">Qty *</label>
+          <input id="gv-qty" type="number" min="1" class="input" value="${order.qty || 1}"/>
+        </div>
+        <div>
+          <label class="label">Catatan (opsional)</label>
+          <textarea id="gv-catatan" class="input" rows="2" placeholder="Opsional"></textarea>
+        </div>
+      </div>`,
+      footer: `<button onclick="App.closeModal()" class="btn-secondary">Batal</button>
+               <button onclick="Penjualan.saveGantiVarian('${order.id}')" class="btn-primary">Simpan</button>`,
+    });
+  },
+
+  _buildGantiVarianCatatan(order, skuDikirim, qty, userNote) {
+    const base = `${this._GANTI_VARIAN_PREFIX}Pesanan ${order.order_no || 'manual'} dipesan ${order.sku}, dikirim ${skuDikirim} (${qty} unit).`;
+    return userNote ? `${base} Catatan: ${userNote}` : base;
+  },
+
+  async saveGantiVarian(id) {
+    const order = this._orders.find(o => o.id === id);
+    if (!order) return;
+
+    const skuDikirim = document.getElementById('gv-sku-dikirim')?.value.trim();
+    const qty         = parseInt(document.getElementById('gv-qty')?.value, 10);
+    const userNote    = document.getElementById('gv-catatan')?.value.trim() || '';
+
+    if (!skuDikirim) { App.toast('Pilih SKU yang benar-benar dikirim.', 'warning'); return; }
+    if (skuDikirim.trim().toUpperCase() === (order.sku || '').trim().toUpperCase()) {
+      App.toast('SKU yang dikirim harus berbeda dari SKU yang dipesan.', 'warning'); return;
+    }
+    if (!qty || qty <= 0) { App.toast('Qty tidak valid.', 'warning'); return; }
+
+    const catatan = this._buildGantiVarianCatatan(order, skuDikirim, qty, userNote);
+
+    // Satu insert array = satu statement SQL (1 request), jadi kedua baris tercatat
+    // sekaligus — tidak ada state "cuma satu baris masuk" kalau request-nya gagal.
+    const { error: adjError } = await App.db().from('stok_adjust').insert([
+      { sku: order.sku,  qty: qty,  notes: catatan },
+      { sku: skuDikirim, qty: -qty, notes: catatan },
+    ]);
+    if (adjError) { App.toast('Gagal menyimpan penyesuaian stok: ' + adjError.message, 'error'); return; }
+
+    const oleh = App.isOwner() ? 'Owner' : 'Admin';
+    const { error: updError } = await App.db().from('orders').update({
+      review_diabaikan_at:      new Date().toISOString(),
+      review_diabaikan_catatan: catatan,
+      review_diabaikan_oleh:    oleh,
+    }).eq('id', id);
+    if (updError) {
+      App.toast('Penyesuaian stok tersimpan, tapi gagal menandai pesanan: ' + updError.message, 'error');
+      return;
+    }
+
+    App.closeModal();
+    App.toast('Varian kirim dicatat. Stok disesuaikan & pesanan ditandai sudah direview.', 'success');
+
+    order.review_diabaikan_at      = new Date().toISOString();
+    order.review_diabaikan_catatan = catatan;
+    order.review_diabaikan_oleh    = oleh;
+
+    this._updateReviewBadge();
+    this._renderTab();
+  },
+
+  async _openGantiVarianInfo(order) {
+    const { data: rows } = await App.db().from('stok_adjust')
+      .select('id,sku,qty,notes').eq('notes', order.review_diabaikan_catatan)
+      .then(r => r, () => ({ data: [] }));
+
+    const dipesanRow = (rows || []).find(r => +r.qty > 0);
+    const dikirimRow = (rows || []).find(r => +r.qty < 0);
+
+    App.openModal({
+      title: 'Ganti Varian Kirim — Sudah Dicatat',
+      body: `
+      <div class="space-y-3">
+        <p class="text-sm text-gray-600">
+          Pesanan <strong>${order.order_no || 'manual'}</strong> sudah pernah ditandai ganti varian kirim.
+        </p>
+        <div class="bg-gray-50 border border-gray-100 rounded-lg p-3 text-sm space-y-1">
+          <p><span class="text-gray-500">Dipesan:</span> <span class="font-mono">${dipesanRow?.sku || order.sku || '-'}</span>${dipesanRow ? ` <span class="text-green-700">(+${dipesanRow.qty})</span>` : ''}</p>
+          <p><span class="text-gray-500">Dikirim:</span> <span class="font-mono">${dikirimRow?.sku || '-'}</span>${dikirimRow ? ` <span class="text-red-600">(${dikirimRow.qty})</span>` : ''}</p>
+        </div>
+        <div>
+          <label class="label">Catatan</label>
+          <p class="text-xs text-gray-500 whitespace-pre-wrap">${order.review_diabaikan_catatan || '-'}</p>
+        </div>
+        ${!rows || !rows.length ? '<p class="text-xs text-amber-600">Baris penyesuaian stok terkait tidak ditemukan (mungkin sudah dihapus manual) — Batalkan di sini hanya akan menghapus tanda pada pesanan.</p>' : ''}
+      </div>`,
+      footer: `<button onclick="App.closeModal()" class="btn-secondary">Tutup</button>
+               <button onclick="Penjualan.undoGantiVarian('${order.id}')" class="btn-danger">Batalkan Penggantian</button>`,
+    });
+  },
+
+  async undoGantiVarian(id) {
+    const order = this._orders.find(o => o.id === id);
+    if (!order) return;
+
+    const ok = await App.confirm(
+      `Batalkan penggantian varian kirim untuk pesanan ${order.order_no || 'manual'}? ` +
+      `Penyesuaian stok terkait akan dihapus dan pesanan ini bisa muncul lagi di "Perlu Direview" ` +
+      `(jika stok_action-nya memang perlu direview).`
+    );
+    if (!ok) return;
+
+    const { data: rows } = await App.db().from('stok_adjust')
+      .select('id').eq('notes', order.review_diabaikan_catatan)
+      .then(r => r, () => ({ data: [] }));
+
+    if (rows && rows.length) {
+      const { error: delErr } = await App.db().from('stok_adjust').delete().in('id', rows.map(r => r.id));
+      if (delErr) { App.toast('Gagal menghapus penyesuaian stok: ' + delErr.message, 'error'); return; }
+    }
+
+    const { error: updErr } = await App.db().from('orders').update({
+      review_diabaikan_at:      null,
+      review_diabaikan_catatan: null,
+      review_diabaikan_oleh:    null,
+    }).eq('id', id);
+    if (updErr) { App.toast('Gagal membatalkan tanda pesanan: ' + updErr.message, 'error'); return; }
+
+    App.closeModal();
+    App.toast('Penggantian varian kirim dibatalkan.', 'success');
+
+    order.review_diabaikan_at      = null;
+    order.review_diabaikan_catatan = null;
+    order.review_diabaikan_oleh    = null;
 
     this._updateReviewBadge();
     this._renderTab();
